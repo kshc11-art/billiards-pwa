@@ -1,0 +1,339 @@
+import { useCallback, useEffect, useMemo } from 'react';
+import { useAppStore } from './store.ts';
+import {
+  engineToSvg,
+  svgToEngine,
+  computePathSvg,
+  BALL_R_SVG,
+} from './utils.ts';
+import DiamondLabels from './DiamondLabels.tsx';
+import SystemGuideLines from './SystemGuideLines.tsx';
+import AnalysisLayers from './AnalysisLayers.tsx';
+
+/**
+ * Table — 가로 모드 좌표(812×375)로 그리는 당구대.
+ *
+ * App에서 SVG의 자식 g 그룹 안으로 렌더된다 (단일 SVG 구조).
+ * orientation 회전은 App의 외곽 g에서 처리되므로 여기는 항상 가로 좌표.
+ *
+ * 레이아웃 (v0.15 확정):
+ *   외곽           : 0,0 ~ 812,375                   (#000034)
+ *   쿠션 띠        : 71,14 ~ 741,361 (670×347)        (#0066ca)
+ *   펠트           : 83,26 ~ 729,349 (646×323, 2:1)   (#3399fe)
+ *   격자 (8×4)     : 다이아 X/Y와 정확히 정렬, opacity 0.14
+ *   다이아 28개     : 위·아래 9+9, 좌·우 5+5 (코너 포함), r=2.8
+ *
+ * 동작:
+ *   - 공 드래그: pointer 이벤트 + setPointerCapture + getScreenCTM().inverse()
+ *               → 부모 g의 orientation 회전을 자동 보정 (세로 모드도 정확)
+ *   - 큐대: 큐볼 → 첫 번째 적구 방향 자동 (v0.15 검증된 방식)
+ *   - 진로: result.pathSvg가 있을 때만 표시 (시뮬 트리거는 5단계)
+ *   - 큐대 회전 드래그·시뮬 호출은 5단계에서 추가
+ */
+
+// ─ 다이아 좌표 (정사각 격자, 코너 포함) ──────────────
+// 펠트 8등분: 가로선 9개 X, 4등분: 세로선 5개 Y
+const DIAMOND_X = [83, 163.75, 244.5, 325.25, 406, 486.75, 567.5, 648.25, 729];
+const DIAMOND_Y = [26, 106.75, 187.5, 268.25, 349];
+const DIAMOND_R = 2.8;
+const DIAMOND_TOP_Y = 7;
+const DIAMOND_BOT_Y = 368;
+const DIAMOND_LEFT_X = 64;
+const DIAMOND_RIGHT_X = 748;
+
+// 공 ID → 그라디언트 매핑
+const BALL_FILL: Record<string, string> = {
+  white: 'url(#ballWhite)',
+  yellow: 'url(#ballYellow)',
+  red: 'url(#ballRed)',
+  red2: 'url(#ballRed)',
+};
+
+const BALL_STROKE: Record<string, string> = {
+  white: '#777',
+  yellow: '#806810',
+  red: '#5a0e0e',
+  red2: '#5a0e0e',
+};
+
+/** 진로 polyline 색 (큐볼은 #FFFFFF 실선 두껍게, 다른 공은 색별 점선 옅게). */
+const PATH_COLOR: Record<string, string> = {
+  white: '#FFFFFF',
+  yellow: '#F5D547',
+  red: '#D63030',
+  red2: '#D63030',
+};
+
+export default function Table() {
+  const sys = useAppStore((s) => s.sys);
+  // simRev는 sys mutable 변경 추적용 (Zustand 리렌더 트리거)
+  const simRev = useAppStore((s) => s.simRev);
+  const result = useAppStore((s) => s.result);
+  const setBallPos = useAppStore((s) => s.setBallPos);
+
+  // 시스템 가이드 라인 흰 점선은 v0.7.8에서 제거됨 (실제 시뮬 진로와 혼동되어 노이즈).
+  // 시스템 가이드는 SystemGuideLines (응용 예시 적용 시 1개 라인) + DiamondLabels로 충분.
+
+  // ── 공 애니메이션 (실시간 frames 따라) ──────────────
+  // result 변경 시 0초부터 시작 → frames 마지막까지 60fps로 위치 갱신.
+  // 끝나면 시작 위치로 복귀 (진로 polyline은 result 동안 계속 표시).
+  // animFrame은 store에 (CueStick이 큐대 숨김 트리거로 사용).
+  const animFrame = useAppStore((s) => s.animFrame);
+  const setAnimFrame = useAppStore((s) => s.setAnimFrame);
+  useEffect(() => {
+    // preview 모드 (자동 시뮬 디바운스) 또는 result 없을 때 — 애니메이션 X.
+    // 사용자가 STRIKE 누른 실제 시뮬만 애니메이션 진행.
+    if (!result?.frames || result.preview) {
+      setAnimFrame(-1);
+      return;
+    }
+    // 큐볼 정지 시점까지만 애니메이션. continuize는 시뮬 끝까지 frames 만들지만
+    // 큐볼이 멈춘 후에도 frames는 동일 위치로 채워짐 → 불필요한 시간 소비.
+    // 큐볼 속도(rvw[3..5])가 거의 0인 첫 frame을 끝으로 사용 + 6초 cap.
+    const cueBallId = sys.cueBallId;
+    const cueBallFrames = result.frames[cueBallId];
+    if (!cueBallFrames || cueBallFrames.length === 0) {
+      setAnimFrame(-1);
+      return;
+    }
+    const FPS = 60;
+    const MAX_SECONDS = 6;
+    const stopThreshold = 0.05; // m/s
+    let stopFrame = cueBallFrames.length;
+    for (let i = 1; i < cueBallFrames.length; i++) {
+      const v = cueBallFrames[i].rvw;
+      const speed = Math.sqrt(v[3] * v[3] + v[4] * v[4]);
+      if (speed < stopThreshold) {
+        stopFrame = i;
+        break;
+      }
+    }
+    const maxFrames = Math.min(stopFrame, MAX_SECONDS * FPS, cueBallFrames.length);
+    const startTime = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const elapsed = (now - startTime) / 1000;
+      const idx = Math.floor(elapsed * 60);
+      if (idx >= maxFrames) {
+        setAnimFrame(maxFrames - 1);
+        // 시뮬 끝 → 600ms 후 큐대 다시 표시 (-1).
+        // cleanup에서 setTimeout 안 지움 — useEffect 재실행돼도 animFrame -1 보장.
+        setTimeout(() => {
+          setAnimFrame(-1);
+        }, 600);
+        return;
+      }
+      setAnimFrame(idx);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      // raf만 cancel — animFrame -1 setTimeout은 그대로 진행.
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [result, setAnimFrame]);
+
+  // 모든 공의 SVG 좌표
+  // animFrame >= 0이면 frames에서 해당 시점 위치, 아니면 sys.balls.rvw 시작 위치.
+  const ballSvg = useMemo(() => {
+    const out: Record<string, [number, number]> = {};
+    for (const [id, ball] of Object.entries(sys.balls)) {
+      if (animFrame >= 0 && result?.frames?.[id]) {
+        const fs = result.frames[id];
+        const f = fs[Math.min(animFrame, fs.length - 1)];
+        out[id] = engineToSvg(f.rvw[0], f.rvw[1], sys.table);
+      } else {
+        out[id] = engineToSvg(ball.rvw[0], ball.rvw[1], sys.table);
+      }
+    }
+    return out;
+    // simRev/animFrame 둘 다 deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sys, simRev, animFrame, result]);
+
+  // 공 드래그
+  const handleBallPointerDown = useCallback(
+    (e: React.PointerEvent<SVGCircleElement>, ballId: string) => {
+      const target = e.currentTarget;
+      const svg = target.ownerSVGElement;
+      if (!svg) return;
+      target.setPointerCapture(e.pointerId);
+      const ballR = sys.balls[ballId]?.params.R ?? 0.0307;
+
+      const pointFromEvent = (ev: PointerEvent): [number, number] | null => {
+        // ball의 누적 변환(부모 g rotate 포함) inverse로 가로 모드 좌표 복원
+        const ctm = target.getScreenCTM();
+        if (!ctm) return null;
+        const pt = svg.createSVGPoint();
+        pt.x = ev.clientX;
+        pt.y = ev.clientY;
+        const local = pt.matrixTransform(ctm.inverse());
+        return [local.x, local.y];
+      };
+
+      const onMove = (ev: PointerEvent) => {
+        const local = pointFromEvent(ev);
+        if (!local) return;
+        const [ex, ey] = svgToEngine(local[0], local[1], sys.table, true, ballR);
+        setBallPos(ballId, ex, ey);
+      };
+
+      const onUp = (ev: PointerEvent) => {
+        try {
+          target.releasePointerCapture(ev.pointerId);
+        } catch {
+          /* 이미 해제됨 */
+        }
+        target.removeEventListener('pointermove', onMove as EventListener);
+        target.removeEventListener('pointerup', onUp as EventListener);
+        target.removeEventListener('pointercancel', onUp as EventListener);
+      };
+
+      target.addEventListener('pointermove', onMove as EventListener);
+      target.addEventListener('pointerup', onUp as EventListener);
+      target.addEventListener('pointercancel', onUp as EventListener);
+    },
+    [sys, setBallPos]
+  );
+
+  return (
+    <g data-component="table">
+      <defs>
+        {/* 공 그라디언트 (좌상에서 빛이 들어오는 듯한 하이라이트) */}
+        <radialGradient id="ballWhite" cx="0.38" cy="0.32" r="0.7">
+          <stop offset="0" stopColor="#FFFFFF" />
+          <stop offset="0.6" stopColor="#E6E6E6" />
+          <stop offset="1" stopColor="#888888" />
+        </radialGradient>
+        <radialGradient id="ballYellow" cx="0.38" cy="0.32" r="0.7">
+          <stop offset="0" stopColor="#FFEA85" />
+          <stop offset="0.55" stopColor="#F5D547" />
+          <stop offset="1" stopColor="#7A6210" />
+        </radialGradient>
+        <radialGradient id="ballRed" cx="0.38" cy="0.32" r="0.7">
+          <stop offset="0" stopColor="#FF7575" />
+          <stop offset="0.55" stopColor="#D63030" />
+          <stop offset="1" stopColor="#7A1818" />
+        </radialGradient>
+
+        {/* 큐대 그라디언트는 CueStick.tsx 안에 정의 (큐대와 함께 분리). */}
+
+        {/* 진로 글로우 */}
+        <filter id="pathGlow" x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur stdDeviation="1.4" result="b" />
+          <feMerge>
+            <feMergeNode in="b" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+
+      {/* 외곽 배경 */}
+      <rect width="812" height="375" fill="#000034" />
+
+      {/* 쿠션 띠 (12px 균등) */}
+      <rect x="71" y="14" width="670" height="347" fill="#0066ca" />
+
+      {/* 펠트 */}
+      <rect x="83" y="26" width="646" height="323" fill="#3399fe" />
+
+      {/* 격자 (펠트 8×4 등분, 다이아와 정렬) */}
+      <g stroke="#FFFFFF" strokeWidth="0.5" opacity="0.14" data-layer="grid">
+        {DIAMOND_X.map((x) => (
+          <line key={`vx-${x}`} x1={x} y1={26} x2={x} y2={349} />
+        ))}
+        {DIAMOND_Y.map((y) => (
+          <line key={`hy-${y}`} x1={83} y1={y} x2={729} y2={y} />
+        ))}
+      </g>
+
+      {/* 다이아 28개 */}
+      <g fill="#FAFAFA" data-layer="diamonds">
+        {DIAMOND_X.map((x) => (
+          <circle key={`top-${x}`} cx={x} cy={DIAMOND_TOP_Y} r={DIAMOND_R} />
+        ))}
+        {DIAMOND_X.map((x) => (
+          <circle key={`bot-${x}`} cx={x} cy={DIAMOND_BOT_Y} r={DIAMOND_R} />
+        ))}
+        {DIAMOND_Y.map((y) => (
+          <circle key={`l-${y}`} cx={DIAMOND_LEFT_X} cy={y} r={DIAMOND_R} />
+        ))}
+        {DIAMOND_Y.map((y) => (
+          <circle key={`r-${y}`} cx={DIAMOND_RIGHT_X} cy={y} r={DIAMOND_R} />
+        ))}
+      </g>
+
+      {/* 시스템 가이드 라인 (다이아 잇는 폴리라인) */}
+      <SystemGuideLines />
+
+      {/* 다이아 좌표 라벨 (시스템 켰을 때만 — 시스템마다 다른 라벨 룰) */}
+      <DiamondLabels />
+
+      {/* 분석 레이어 (분리각·30°/90°·거리·키스·무회전·충돌점) */}
+      <AnalysisLayers />
+
+      {/* 큐대는 CueStick 컴포넌트로 분리 (App.tsx에서 InfoBox 위에 렌더). */}
+
+      {/* 공 (드래그 가능) — 진로 polyline 아래 */}
+      <g data-layer="balls">
+        {Object.entries(ballSvg).map(([id, [x, y]]) => {
+          const isCue = id === sys.cueBallId;
+          const fill = BALL_FILL[id] ?? '#cccccc';
+          const stroke = BALL_STROKE[id] ?? '#444';
+          return (
+            <g key={id}>
+              <circle
+                cx={x}
+                cy={y}
+                r={BALL_R_SVG}
+                fill={fill}
+                stroke={stroke}
+                strokeWidth="0.6"
+                style={{ cursor: 'grab', touchAction: 'none' }}
+                onPointerDown={(e) => handleBallPointerDown(e, id)}
+              />
+              {/* 큐볼 가운데 빨간 점 (당점 표시 — 4단계 InfoBox와 연동 예정) */}
+              {isCue && (
+                <circle
+                  cx={x}
+                  cy={y}
+                  r="2"
+                  fill="#D63030"
+                  pointerEvents="none"
+                />
+              )}
+            </g>
+          );
+        })}
+      </g>
+
+      {/* 진로 폴리라인 (모든 공 — 공 위에 그려서 충돌 직후 진로도 가시).
+          큐볼: 흰 실선 두껍게 + 글로우. 다른 공: 색별 점선 옅게.
+          preview(STRIKE 누르기 전 자동 시뮬)와 실제 시뮬 모두 표시 — 학습용.
+          (사용자가 당점·각도 변경하면 즉시 진로 갱신 → 학습 효과). */}
+      {result?.frames &&
+        Object.entries(result.frames).map(([id, frames]) => {
+          const path = computePathSvg(frames, sys.table);
+          if (!path) return null;
+          const isCue = id === sys.cueBallId;
+          const color = PATH_COLOR[id] ?? '#FFFFFF';
+          return (
+            <polyline
+              key={`path-${id}`}
+              points={path}
+              fill="none"
+              stroke={color}
+              strokeWidth={isCue ? 2.4 : 1.6}
+              strokeOpacity={isCue ? 0.92 : 0.55}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeDasharray={isCue ? undefined : '4 3'}
+              filter={isCue ? 'url(#pathGlow)' : undefined}
+              data-layer={`path-${id}`}
+              pointerEvents="none"
+            />
+          );
+        })}
+    </g>
+  );
+}
