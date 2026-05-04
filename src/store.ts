@@ -196,9 +196,23 @@ function createInitialSystem(game: Game): EngineSystem {
 function recalculatePhi(sys: EngineSystem, fallbackPhi: number): number {
   const cueBall = sys.balls[sys.cueBallId];
   if (!cueBall) return fallbackPhi;
-  const targetEntry = Object.entries(sys.balls).find(([id]) => id !== sys.cueBallId);
-  if (!targetEntry) return fallbackPhi;
-  const [, target] = targetEntry;
+  // 가장 가까운 적구 찾기 (yellow 강제 X — 사용자 의도된 1적구)
+  let nearestId: string | null = null;
+  let nearestDistSq = Infinity;
+  const cx = cueBall.rvw[0];
+  const cy = cueBall.rvw[1];
+  for (const [id, ball] of Object.entries(sys.balls)) {
+    if (id === sys.cueBallId) continue;
+    const dx = ball.rvw[0] - cx;
+    const dy = ball.rvw[1] - cy;
+    const distSq = dx * dx + dy * dy;
+    if (distSq < nearestDistSq) {
+      nearestDistSq = distSq;
+      nearestId = id;
+    }
+  }
+  if (!nearestId) return fallbackPhi;
+  const target = sys.balls[nearestId];
   const cueSvg = engineToSvg(cueBall.rvw[0], cueBall.rvw[1], sys.table);
   const tgtSvg = engineToSvg(target.rvw[0], target.rvw[1], sys.table);
   return svgAngleToEnginePhi(cueSvg, tgtSvg);
@@ -469,14 +483,28 @@ export const useAppStore = create<AppState>()(
           cueB = example.cueB ?? 0;
         }
 
-        // phi 재계산 (큐볼 → 1적구(yellow) 라인 + 두께 옵셋)
+        // phi 재계산 (큐볼 → 가장 가까운 적구 라인 + 두께 옵셋)
+        // yellow 강제 X — 응용 예시 데이터의 cue·yellow·red 위치 따라 가장 가까운 적구가 1적구
         const cueBall = sys.balls['white'];
-        const yellow = sys.balls['yellow'];
+        let nearestTarget: typeof cueBall = null as unknown as typeof cueBall;
+        if (cueBall) {
+          let nearestDistSq = Infinity;
+          for (const [id, ball] of Object.entries(sys.balls)) {
+            if (id === 'white') continue;
+            const dx = ball.rvw[0] - cueBall.rvw[0];
+            const dy = ball.rvw[1] - cueBall.rvw[1];
+            const dSq = dx * dx + dy * dy;
+            if (dSq < nearestDistSq) {
+              nearestDistSq = dSq;
+              nearestTarget = ball;
+            }
+          }
+        }
         let phi = get().cue.phi;
-        if (cueBall && yellow) {
+        if (cueBall && nearestTarget) {
           const cueSvg = engineToSvg(cueBall.rvw[0], cueBall.rvw[1], sys.table);
-          const yelSvg = engineToSvg(yellow.rvw[0], yellow.rvw[1], sys.table);
-          phi = svgAngleToEnginePhi(cueSvg, yelSvg);
+          const tgtSvg = engineToSvg(nearestTarget.rvw[0], nearestTarget.rvw[1], sys.table);
+          phi = svgAngleToEnginePhi(cueSvg, tgtSvg);
 
           // 두께 옵셋 결정 — thickness 라벨 우선, 없으면 cuePhiOffsetDeg (deprecated)
           if (example.thickness !== undefined) {
@@ -484,8 +512,8 @@ export const useAppStore = create<AppState>()(
             const isBank = example.thickness.includes('빈쿠션') || example.thickness.includes('—');
             if (t.eighths !== null && t.eighths < 8) {
               // 거리 기반 정확 계산 — 큐대가 적구 중심에서 (8-e)/8 * 2R 옆 향함
-              const dx = yellow.rvw[0] - cueBall.rvw[0];
-              const dy = yellow.rvw[1] - cueBall.rvw[1];
+              const dx = nearestTarget.rvw[0] - cueBall.rvw[0];
+              const dy = nearestTarget.rvw[1] - cueBall.rvw[1];
               const distance = Math.sqrt(dx * dx + dy * dy);
               const R = 0.02865;
               const offsetDist = ((8 - t.eighths) / 8) * 2 * R;
@@ -584,21 +612,33 @@ export const useAppStore = create<AppState>()(
           if (otherIds[1]) setPos(otherIds[1], applied.layout.object2.ex, applied.layout.object2.ey);
         }
 
-        // 큐 a/b/V0 적용 + phi 자동 (1적구 방향)
+        // 큐 a/b/V0 적용 + phi 자동 (가장 가까운 적구 방향)
         const cueBall = sys.balls[sys.cueBallId];
-        const otherIdsList = Object.keys(sys.balls).filter((id) => id !== sys.cueBallId);
-        const obj1 = otherIdsList[0] ? sys.balls[otherIdsList[0]] : null;
+        let nearestObj1: typeof cueBall = null as unknown as typeof cueBall;
+        if (cueBall) {
+          let nearestDistSq = Infinity;
+          for (const [id, ball] of Object.entries(sys.balls)) {
+            if (id === sys.cueBallId) continue;
+            const dx = ball.rvw[0] - cueBall.rvw[0];
+            const dy = ball.rvw[1] - cueBall.rvw[1];
+            const dSq = dx * dx + dy * dy;
+            if (dSq < nearestDistSq) {
+              nearestDistSq = dSq;
+              nearestObj1 = ball;
+            }
+          }
+        }
         let phi = get().cue.phi;
-        if (cueBall && obj1) {
+        if (cueBall && nearestObj1) {
           const cueSvg = engineToSvg(cueBall.rvw[0], cueBall.rvw[1], sys.table);
-          const obj1Svg = engineToSvg(obj1.rvw[0], obj1.rvw[1], sys.table);
+          const obj1Svg = engineToSvg(nearestObj1.rvw[0], nearestObj1.rvw[1], sys.table);
           phi = svgAngleToEnginePhi(cueSvg, obj1Svg);
           // 두께 옵셋 — 거리 기반 정확 계산
           const thicknessStr = exampleInput.thickness;
           const isBank = thicknessStr.includes('빈쿠션') || thicknessStr.includes('—');
           if (applied.thicknessEighths !== null && applied.thicknessEighths < 8) {
-            const dx = obj1.rvw[0] - cueBall.rvw[0];
-            const dy = obj1.rvw[1] - cueBall.rvw[1];
+            const dx = nearestObj1.rvw[0] - cueBall.rvw[0];
+            const dy = nearestObj1.rvw[1] - cueBall.rvw[1];
             const distance = Math.sqrt(dx * dx + dy * dy);
             const R = 0.02865;
             const e = applied.thicknessEighths;

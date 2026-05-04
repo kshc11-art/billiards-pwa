@@ -36,7 +36,12 @@ export default defineConfig({
       },
     }),
   ],
-  base: './', // GitHub Pages 등 서브 경로 배포 호환
+  // GitHub Pages 배포 시 저장소 이름이 base path가 됨.
+  // GitHub Actions 환경 변수 GITHUB_REPOSITORY로 자동 추출.
+  // 로컬 빌드 시는 './' 사용.
+  base: process.env.GITHUB_REPOSITORY
+    ? `/${process.env.GITHUB_REPOSITORY.split('/')[1]}/`
+    : './',
   build: {
     target: 'es2022',
     sourcemap: true,

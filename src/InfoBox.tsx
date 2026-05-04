@@ -504,25 +504,20 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
 
   // ── 적구 드래그 핸들러 — 사용자 명시 "적구는 드래그 안해" → 제거 (인터랙션 X) ──
 
-  // 라벨: 두께(perp 기반)·시계·팁·V₀
+  // 라벨: 두께(aimedTargetId perp 기반)·시계·팁·V₀
+  // 다이얼이 가리키는 적구를 기준으로 두께 계산 (yellow 고정 X — 다이얼과 일관).
   const labels = useMemo(() => {
     let thickness = '0/8';
     const cueBall = sys.balls[sys.cueBallId];
-    const targetEntry = Object.entries(sys.balls).find(
-      ([id]) => id !== sys.cueBallId
-    );
-    if (cueBall && targetEntry) {
-      const [, target] = targetEntry;
-      // engine 좌표: 큐볼 → 적구 vector + cue.phi 방향 ray
+    const target = aimedTargetId ? sys.balls[aimedTargetId] : null;
+    if (cueBall && target) {
       const ex = target.rvw[0] - cueBall.rvw[0];
       const ey = target.rvw[1] - cueBall.rvw[1];
       const phiRad = (cue.phi * Math.PI) / 180;
       const dx = Math.cos(phiRad);
       const dy = Math.sin(phiRad);
-      const proj = ex * dx + ey * dy; // ray 방향 거리 성분
-      // perp = ray로부터 적구 중심까지 수직 거리
+      const proj = ex * dx + ey * dy;
       const perp = Math.sqrt(Math.max(0, ex * ex + ey * ey - proj * proj));
-      // proj < 0 (큐볼 뒤쪽 향함)이면 두께 0
       if (proj > 0) {
         thickness = thicknessLabelByPerp(perp, cueBall.params.R);
       }
