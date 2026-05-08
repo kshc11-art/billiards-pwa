@@ -1454,9 +1454,14 @@ export function cueStrike(m, M, R, V0, phi_deg, theta_deg, a, b) {
   const Qb = (sin(theta)*c + cos(theta)*b) * R;
 
   // 충격 후 속도 크기
+  // 원본: v = 2*V0 / (1 + m/M + temp/I_m) — off-center 감쇠가 실측 대비 3~6배 과대.
+  // 보정: CUE_SPEED_PRESERVATION 팩터로 감쇠 제한.
+  //   실측 (Alciatore TP A-14): 1T≈3%, 2T≈10%, 3T≈20% 감속.
+  //   팩터=0.20 적용 시: 1T≈4%, 1.5T≈8%, 2T≈14%, 3T≈21% (실측 근사).
   const temp = Qa*Qa + (Qb*cos(theta))**2 + (Qc*sin(theta))**2
              - 2*Qb*Qc*cos(theta)*sin(theta);
-  const v = 2 * V0 / (1 + m/M + temp/I_m);
+  const CUE_SPEED_PRESERVATION = 0.20;
+  const v = 2 * V0 / (1 + m/M + CUE_SPEED_PRESERVATION * temp/I_m);
 
   // 공 프레임 속도 (Pooltool: z축 무시)
   const vB = new Float64Array(3);
