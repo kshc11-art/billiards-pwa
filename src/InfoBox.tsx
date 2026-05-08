@@ -120,6 +120,7 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
   const sys = useAppStore((s) => s.sys);
   const simRev = useAppStore((s) => s.simRev);
   const setCue = useAppStore((s) => s.setCue);
+  const setBallPos = useAppStore((s) => s.setBallPos);
   const setInfoBoxPos = useAppStore((s) => s.setInfoBoxPos);
   const setInfoBoxActive = useAppStore((s) => s.setInfoBoxActive);
   const runSimulation = useAppStore((s) => s.runSimulation);
@@ -418,7 +419,10 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
   // 다이얼 큐볼 위치는 항상 중심(CUE_BALL_DIAL_CX) 고정 — 당점 회전 표시 전용.
   // (이전 버전: cueCx 평행이동에 따라 마커도 이동 → 박스 밖으로 나가는 시각 버그)
 
-  // 큐볼 안 흰 영역 (r=25) drag → 당점 a/b 변경. 큐볼 동적 cx 기준.
+  // 큐볼 안 흰 영역 — 탭(짧은 터치)→ 당점 a/b, 드래그(긴 이동)→ 테이블 위 수구 위치 이동.
+  // 기준: 누적 이동 거리 DRAG_THRESHOLD(client px) 미만이면 당점, 이상이면 위치 이동.
+  const DRAG_THRESHOLD = 8; // client pixel
+  const CUE_POS_SENSITIVITY = 0.004; // 다이얼 드래그 1 SVG px ≈ 4mm 엔진 이동
   const handleDialPointerDown = useCallback(
     (e: React.PointerEvent<SVGCircleElement>) => {
       e.preventDefault();
@@ -430,20 +434,33 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
       if (!svg) return;
       target.setPointerCapture(e.pointerId);
 
-      // 큐볼 dial cx (mirror 평행이동 반영) — 클릭 시점의 큐볼 위치 기준 a/b 계산
+      // 큐볼 dial cx (mirror 평행이동 반영) — 당점 모드에서 사용
       const ratio = dialGroup ? dialGroup.ratioPerp : 0;
       const clamped = Math.min(1, ratio);
       const sign = dialGroup ? (dialGroup.cueCx >= CUE_BALL_DIAL_CX ? 1 : -1) : 1;
       const cxDiff = clamped * TARGET_CX_DIFF_MAX;
       const cueDialCxAtStart = CUE_BALL_DIAL_CX - (cxDiff / 2) * sign;
 
-      const apply = (clientX: number, clientY: number) => {
-        const ctm = svg.getScreenCTM();
-        if (!ctm) return;
+      const startClientX = e.clientX;
+      const startClientY = e.clientY;
+      let mode: 'undecided' | 'position' = 'undecided';
+
+      // 위치 이동 모드용 — 시작 시점 수구 엔진 좌표
+      const cueBall = sys.balls[sys.cueBallId];
+      const startEx = cueBall ? cueBall.rvw[0] : 0;
+      const startEy = cueBall ? cueBall.rvw[1] : 0;
+      const ctm = svg.getScreenCTM();
+      const scaleX = ctm ? 1 / Math.abs(ctm.a) : 1;
+      const scaleY = ctm ? 1 / Math.abs(ctm.d) : 1;
+
+      // 당점 a/b 적용 함수
+      const applyTip = (clientX: number, clientY: number) => {
+        const ctm2 = svg.getScreenCTM();
+        if (!ctm2) return;
         const pt = svg.createSVGPoint();
         pt.x = clientX;
         pt.y = clientY;
-        const local = pt.matrixTransform(ctm.inverse());
+        const local = pt.matrixTransform(ctm2.inverse());
         const dx = local.x - pos.x - DIAL_X - cueDialCxAtStart;
         const dy = local.y - pos.y - DIAL_Y - CUE_BALL_DIAL_CY;
         let a = dx / CUE_DOT_RANGE;
@@ -456,13 +473,40 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
         setCue({ a, b });
       };
 
-      apply(e.clientX, e.clientY);
+      // pointer down 시점에는 당점 적용하지 않음 — 드래그 여부 확인 후 결정.
+      // (즉시 적용 시 드래그 의도인데 당점이 바뀌는 부작용)
 
       const onMove = (ev: PointerEvent) => {
-        apply(ev.clientX, ev.clientY);
+        const dxClient = ev.clientX - startClientX;
+        const dyClient = ev.clientY - startClientY;
+        const dist = Math.hypot(dxClient, dyClient);
+
+        if (mode === 'undecided') {
+          if (dist >= DRAG_THRESHOLD) {
+            mode = 'position';
+          } else {
+            // threshold 미만: 아직 판정 미정, 움직임 무시
+            triggerActive();
+            return;
+          }
+        }
+
+        if (mode === 'position') {
+          // 수구 위치 이동 (클라이언트 pixel delta → 엔진 좌표 delta)
+          const dxSvg = dxClient * scaleX;
+          const dySvg = dyClient * scaleY;
+          const newEx = startEx + dxSvg * CUE_POS_SENSITIVITY;
+          const newEy = startEy - dySvg * CUE_POS_SENSITIVITY;
+          setBallPos(sys.cueBallId, newEx, newEy);
+        }
         triggerActive();
       };
+
       const onUp = (ev: PointerEvent) => {
+        // 탭 판정: 드래그 threshold 미달 상태에서 pointer up → 당점 적용
+        if (mode === 'undecided') {
+          applyTip(ev.clientX, ev.clientY);
+        }
         try {
           target.releasePointerCapture(ev.pointerId);
         } catch {
@@ -477,7 +521,7 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
       target.addEventListener('pointerup', onUp as EventListener);
       target.addEventListener('pointercancel', onUp as EventListener);
     },
-    [pos.x, pos.y, setCue, triggerActive]
+    [pos.x, pos.y, setCue, setBallPos, sys, triggerActive, dialGroup]
   );
 
   /** 다이얼 적구 색 (ray cast 결과 적구 색, 없으면 회색·반투명). */
@@ -609,7 +653,7 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
                   pointerEvents="none"
                 />
               )}
-              {/* 2. 큐볼 (drag = a/b 당점 회전) */}
+              {/* 2. 큐볼 (탭 = 당점 a/b, 드래그 = 테이블 위 수구 위치 미세 이동) */}
               <circle
                 cx={cueDialCx}
                 cy={0}
@@ -617,7 +661,7 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
                 fill="#FFFFFF"
                 stroke="#888"
                 strokeWidth={0.8}
-                style={{ cursor: 'crosshair', touchAction: 'none' }}
+                style={{ cursor: 'grab', touchAction: 'none' }}
                 onPointerDown={handleDialPointerDown}
               />
 

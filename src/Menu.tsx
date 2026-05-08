@@ -144,6 +144,7 @@ export default function Menu() {
   const setAutoRecord = useAppStore((s) => s.setAutoRecord);
   const setHandicap = useAppStore((s) => s.setHandicap);
   const resetSystem = useAppStore((s) => s.resetSystem);
+  const randomizeBalls = useAppStore((s) => s.randomizeBalls);
   const clearResult = useAppStore((s) => s.clearResult);
 
   // derived
@@ -260,6 +261,33 @@ export default function Menu() {
                   )}
                 </div>
               )}
+            </Section>
+
+            {/* 배치 (공 위치 설정) */}
+            <Section title="배치">
+              <ChipRow>
+                <Chip
+                  active={false}
+                  onClick={() => randomizeBalls()}
+                  tone="tier2"
+                >
+                  🎲 랜덤
+                </Chip>
+                <Chip
+                  active={false}
+                  onClick={() => {
+                    resetSystem();
+                    setDrill(null);
+                  }}
+                  tone="neutral"
+                >
+                  ↺ 초기 위치
+                </Chip>
+              </ChipRow>
+              <p className="mt-1.5 text-[10px] text-[#9FBEDF] leading-snug">
+                테이블 위 공을 직접 드래그하여 원하는 위치로 이동할 수 있습니다.
+                InfoBox 수구를 드래그하면 미세 위치 조절이 가능합니다.
+              </p>
             </Section>
 
             {/* 시스템 가이드 */}

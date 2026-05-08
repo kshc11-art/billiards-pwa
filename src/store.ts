@@ -281,6 +281,10 @@ export interface AppState {
   applyExample: (example: { layout?: string; impact: string; thickness: string; stroke: string }) => void;
 
   runSimulation: (opts?: { preview?: boolean }) => void;
+  /** 시뮬 최종 프레임의 공 위치를 sys에 반영 (연속 플레이). */
+  applyFinalPositions: () => void;
+  /** 공 위치를 펠트 내 랜덤으로 재배치 (겹침 방지). */
+  randomizeBalls: () => void;
   clearResult: () => void;
   setAnimFrame: (frame: number) => void;
 
@@ -818,6 +822,77 @@ export const useAppStore = create<AppState>()(
 
       clearResult: () => set({ result: null, animFrame: -1 }),
       setAnimFrame: (frame) => set({ animFrame: frame }),
+
+      // ── 연속 플레이: 시뮬 최종 위치 반영 ──────────────
+      applyFinalPositions: () => {
+        const { sys, result, cue } = get();
+        if (!result?.frames || result.preview) return; // preview 결과는 적용 X
+        // 각 공의 마지막 프레임 위치를 sys에 반영
+        for (const [id, frames] of Object.entries(result.frames)) {
+          const ball = sys.balls[id];
+          if (!ball || frames.length === 0) continue;
+          const last = frames[frames.length - 1];
+          ball.rvw[0] = last.rvw[0];
+          ball.rvw[1] = last.rvw[1];
+          ball.rvw[3] = ball.rvw[4] = ball.rvw[5] = 0; // v=0
+          ball.rvw[6] = ball.rvw[7] = ball.rvw[8] = 0; // ω=0
+          ball.state = STATIONARY;
+        }
+        // phi 재계산 (phiAuto일 때만)
+        const phi = cue.phiAuto ? recalculatePhi(sys, cue.phi) : cue.phi;
+        set({
+          simRev: get().simRev + 1,
+          result: null,
+          animFrame: -1,
+          cue: { ...cue, phi },
+        });
+        // 새 위치 기준 미리보기 시뮬 자동 실행
+        scheduleAutoSim(get);
+      },
+
+      // ── 랜덤 배치 ─────────────────────────────────────
+      randomizeBalls: () => {
+        const { sys, cue } = get();
+        const W = sys.table.w;
+        const L = sys.table.l;
+        const R = sys.balls[sys.cueBallId]?.params.R ?? 0.0307;
+        const margin = R * 2; // 벽에서 최소 2R 거리
+        const minSep = R * 3; // 공 간 최소 3R 간격
+
+        const placed: [number, number][] = [];
+        for (const id of Object.keys(sys.balls)) {
+          let attempts = 0;
+          let ex: number, ey: number;
+          do {
+            ex = margin + Math.random() * (W - 2 * margin);
+            ey = margin + Math.random() * (L - 2 * margin);
+            attempts++;
+          } while (
+            attempts < 200 &&
+            placed.some(([px, py]) => Math.hypot(ex - px, ey - py) < minSep)
+          );
+          placed.push([ex, ey]);
+
+          const ball = sys.balls[id];
+          if (!ball) continue;
+          ball.rvw[0] = ex;
+          ball.rvw[1] = ey;
+          ball.rvw[3] = ball.rvw[4] = ball.rvw[5] = 0;
+          ball.rvw[6] = ball.rvw[7] = ball.rvw[8] = 0;
+          ball.state = STATIONARY;
+        }
+        const phi = cue.phiAuto ? recalculatePhi(sys, cue.phi) : cue.phi;
+        set({
+          simRev: get().simRev + 1,
+          result: null,
+          animFrame: -1,
+          cue: { ...cue, phi, phiAuto: true },
+          menu: { ...get().menu, drillId: null },
+          activeExample: null,
+          activeApplicationExampleId: null,
+        });
+        scheduleAutoSim(get);
+      },
 
       // ── 통계 ────────────────────────────────────────
       recordAttempt: (success) => {

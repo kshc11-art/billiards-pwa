@@ -3,7 +3,8 @@ import { useAppStore } from './store.ts';
 import {
   engineToSvg,
   svgToEngine,
-  computePathSvg,
+  computeSmoothPathD,
+  computeDotFrames,
   BALL_R_SVG,
 } from './utils.ts';
 import DiamondLabels from './DiamondLabels.tsx';
@@ -76,10 +77,11 @@ export default function Table() {
 
   // ── 공 애니메이션 (실시간 frames 따라) ──────────────
   // result 변경 시 0초부터 시작 → frames 마지막까지 60fps로 위치 갱신.
-  // 끝나면 시작 위치로 복귀 (진로 polyline은 result 동안 계속 표시).
+  // 끝나면 최종 위치를 sys에 반영 (연속 플레이).
   // animFrame은 store에 (CueStick이 큐대 숨김 트리거로 사용).
   const animFrame = useAppStore((s) => s.animFrame);
   const setAnimFrame = useAppStore((s) => s.setAnimFrame);
+  const applyFinalPositions = useAppStore((s) => s.applyFinalPositions);
   useEffect(() => {
     // preview 모드 (자동 시뮬 디바운스) 또는 result 없을 때 — 애니메이션 X.
     // 사용자가 STRIKE 누른 실제 시뮬만 애니메이션 진행.
@@ -116,10 +118,18 @@ export default function Table() {
       const idx = Math.floor(elapsed * 60);
       if (idx >= maxFrames) {
         setAnimFrame(maxFrames - 1);
-        // 시뮬 끝 → 600ms 후 큐대 다시 표시 (-1).
-        // cleanup에서 setTimeout 안 지움 — useEffect 재실행돼도 animFrame -1 보장.
+        // 시뮬 끝 → 600ms 후 최종 위치를 sys에 반영 (연속 플레이).
+        // 레이스 컨디션 방지: 600ms 사이에 preview 시뮬이 result를 덮어쓸 수 있으므로
+        // 현재 frames 참조를 캡처하여 변경 여부 확인 후 적용.
+        const capturedFrames = result.frames;
         setTimeout(() => {
-          setAnimFrame(-1);
+          const s = useAppStore.getState();
+          if (s.result?.frames === capturedFrames && !s.result.preview) {
+            s.applyFinalPositions();
+          } else {
+            // result가 바뀌었으면 (preview 등) animFrame만 리셋
+            s.setAnimFrame(-1);
+          }
         }, 600);
         return;
       }
@@ -128,10 +138,10 @@ export default function Table() {
     };
     raf = requestAnimationFrame(tick);
     return () => {
-      // raf만 cancel — animFrame -1 setTimeout은 그대로 진행.
+      // raf만 cancel — applyFinalPositions setTimeout은 그대로 진행.
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [result, setAnimFrame]);
+  }, [result, setAnimFrame, applyFinalPositions]);
 
   // 모든 공의 SVG 좌표
   // animFrame >= 0이면 frames에서 해당 시점 위치, 아니면 sys.balls.rvw 시작 위치.
@@ -150,6 +160,24 @@ export default function Table() {
     // simRev/animFrame 둘 다 deps
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sys, simRev, animFrame, result]);
+
+  // ── 수구 점(dot) 위치 — 프레임별 쿼터니언 적분 ────────
+  const cueBallDot = useMemo(() => {
+    const cueBallId = sys.cueBallId;
+    const cueBall = sys.balls[cueBallId];
+    if (!cueBall) return null;
+    const cueBallFrames = result?.frames?.[cueBallId];
+    if (!cueBallFrames || cueBallFrames.length < 2) return null;
+    return computeDotFrames(cueBallFrames, cueBall.params.R, BALL_R_SVG);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result, sys]);
+
+  // 현재 프레임의 점 위치 (애니메이션 중에만)
+  const dotNow = useMemo(() => {
+    if (!cueBallDot || animFrame < 0) return null;
+    const idx = Math.min(animFrame, cueBallDot.length - 1);
+    return cueBallDot[idx];
+  }, [cueBallDot, animFrame]);
 
   // 공 드래그
   const handleBallPointerDown = useCallback(
@@ -274,7 +302,7 @@ export default function Table() {
 
       {/* 큐대는 CueStick 컴포넌트로 분리 (App.tsx에서 InfoBox 위에 렌더). */}
 
-      {/* 공 (드래그 가능) — 진로 polyline 아래 */}
+      {/* 공 (드래그 가능) — 진로 path 아래 */}
       <g data-layer="balls">
         {Object.entries(ballSvg).map(([id, [x, y]]) => {
           const isCue = id === sys.cueBallId;
@@ -292,13 +320,14 @@ export default function Table() {
                 style={{ cursor: 'grab', touchAction: 'none' }}
                 onPointerDown={(e) => handleBallPointerDown(e, id)}
               />
-              {/* 큐볼 가운데 빨간 점 (당점 표시 — 4단계 InfoBox와 연동 예정) */}
+              {/* 수구 점(dot) — 실제 당구공처럼 표면 점 표시 */}
               {isCue && (
                 <circle
-                  cx={x}
-                  cy={y}
-                  r="2"
+                  cx={x + (dotNow ? dotNow.dx : 0)}
+                  cy={y + (dotNow ? dotNow.dy : 0)}
+                  r={dotNow ? 1.8 : 2}
                   fill="#D63030"
+                  fillOpacity={dotNow ? dotNow.opacity : 1}
                   pointerEvents="none"
                 />
               )}
@@ -307,24 +336,24 @@ export default function Table() {
         })}
       </g>
 
-      {/* 진로 폴리라인 (모든 공 — 공 위에 그려서 충돌 직후 진로도 가시).
+      {/* 진로 스무스 패스 (모든 공 — 공 위에 그려서 충돌 직후 진로도 가시).
           큐볼: 흰 실선 두껍게 + 글로우. 다른 공: 색별 점선 옅게.
-          preview(STRIKE 누르기 전 자동 시뮬)와 실제 시뮬 모두 표시 — 학습용.
-          (사용자가 당점·각도 변경하면 즉시 진로 갱신 → 학습 효과). */}
+          RDP 간소화 + Catmull-Rom 스플라인 → 물리 떨림 없는 매끄러운 경로.
+          쿠션 반사점은 날카로운 꺾임 유지. */}
       {result?.frames &&
         Object.entries(result.frames).map(([id, frames]) => {
-          const path = computePathSvg(frames, sys.table);
-          if (!path) return null;
+          const d = computeSmoothPathD(frames, sys.table);
+          if (!d) return null;
           const isCue = id === sys.cueBallId;
           const color = PATH_COLOR[id] ?? '#FFFFFF';
           return (
-            <polyline
+            <path
               key={`path-${id}`}
-              points={path}
+              d={d}
               fill="none"
               stroke={color}
-              strokeWidth={isCue ? 2.4 : 1.6}
-              strokeOpacity={isCue ? 0.92 : 0.55}
+              strokeWidth={isCue ? 2.2 : 1.4}
+              strokeOpacity={isCue ? 0.88 : 0.5}
               strokeLinecap="round"
               strokeLinejoin="round"
               strokeDasharray={isCue ? undefined : '4 3'}

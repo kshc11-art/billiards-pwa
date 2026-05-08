@@ -285,6 +285,208 @@ export function computePathSvg(
   return points.join(' ');
 }
 
+// ════════════════════════════════════════════════════════════════
+// 스무스 경로 (SVG <path> d 속성)
+//   1. 프레임 → SVG 좌표 샘플링
+//   2. RDP 간소화 (물리 미세 떨림 제거)
+//   3. 꺾임점(쿠션 반사) 감지 → 세그먼트 분할
+//   4. 세그먼트별 Catmull-Rom → 큐빅 베지어 변환
+//   결과: 직선 구간은 깨끗한 직선, 커브 구간은 매끄러운 곡선,
+//         쿠션 반사는 날카로운 꺾임 유지.
+// ════════════════════════════════════════════════════════════════
+
+/** Ramer-Douglas-Peucker 경로 간소화. */
+function rdpSimplify(pts: [number, number][], eps: number): [number, number][] {
+  if (pts.length <= 2) return pts;
+  const [x1, y1] = pts[0];
+  const [x2, y2] = pts[pts.length - 1];
+  const dx = x2 - x1, dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy;
+  let maxD = 0, maxI = 0;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [px, py] = pts[i];
+    let d: number;
+    if (lenSq < 1e-12) {
+      d = Math.hypot(px - x1, py - y1);
+    } else {
+      const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / lenSq));
+      d = Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+    }
+    if (d > maxD) { maxD = d; maxI = i; }
+  }
+  if (maxD > eps) {
+    const left = rdpSimplify(pts.slice(0, maxI + 1), eps);
+    const right = rdpSimplify(pts.slice(maxI), eps);
+    return [...left.slice(0, -1), ...right];
+  }
+  return [pts[0], pts[pts.length - 1]];
+}
+
+/** 꺾임점(쿠션 반사) 인덱스 감지 — 연속 세그먼트 사잇각 > threshold. */
+function detectCorners(pts: [number, number][], threshold: number): Set<number> {
+  const corners = new Set<number>();
+  for (let i = 1; i < pts.length - 1; i++) {
+    const ax = pts[i][0] - pts[i - 1][0], ay = pts[i][1] - pts[i - 1][1];
+    const bx = pts[i + 1][0] - pts[i][0], by = pts[i + 1][1] - pts[i][1];
+    const dot = ax * bx + ay * by;
+    const cross = ax * by - ay * bx;
+    if (Math.abs(Math.atan2(cross, dot)) > threshold) corners.add(i);
+  }
+  return corners;
+}
+
+/** Catmull-Rom 포인트 배열 → SVG 큐빅 베지어 d 문자열 (M/C). */
+function catmullRomToD(pts: [number, number][], startWithM: boolean): string {
+  if (pts.length < 2) return '';
+  const f = (n: number) => n.toFixed(1);
+  if (pts.length === 2) {
+    const prefix = startWithM ? `M${f(pts[0][0])},${f(pts[0][1])} ` : '';
+    return `${prefix}L${f(pts[1][0])},${f(pts[1][1])}`;
+  }
+  let d = startWithM ? `M${f(pts[0][0])},${f(pts[0][1])}` : '';
+  const alpha = 1 / 6; // tension factor (1/6 = standard Catmull-Rom)
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[Math.min(pts.length - 1, i + 2)];
+    const cp1x = p1[0] + (p2[0] - p0[0]) * alpha;
+    const cp1y = p1[1] + (p2[1] - p0[1]) * alpha;
+    const cp2x = p2[0] - (p3[0] - p1[0]) * alpha;
+    const cp2y = p2[1] - (p3[1] - p1[1]) * alpha;
+    d += ` C${f(cp1x)},${f(cp1y)} ${f(cp2x)},${f(cp2y)} ${f(p2[0])},${f(p2[1])}`;
+  }
+  return d;
+}
+
+/**
+ * continuize 프레임 → 스무스 SVG path d 속성.
+ * polyline 대신 <path d="..."> 에 사용.
+ */
+export function computeSmoothPathD(
+  frames: EngineFrame[] | undefined,
+  table: EngineTable,
+): string {
+  if (!frames || frames.length < 2) return '';
+  // 1. 모든 프레임 → SVG 좌표 (매 프레임, 다운샘플 X)
+  const raw: [number, number][] = [];
+  for (let i = 0; i < frames.length; i++) {
+    raw.push(engineToSvg(frames[i].rvw[0], frames[i].rvw[1], table));
+  }
+  // 2. RDP 간소화 (미세 떨림 제거, 0.35 SVG px ≈ 서브픽셀)
+  const simplified = rdpSimplify(raw, 0.35);
+  if (simplified.length < 2) return '';
+  // 3. 꺾임점 감지 (15° 이상 = 쿠션 반사)
+  const corners = detectCorners(simplified, 15 * Math.PI / 180);
+  // 4. 꺾임점에서 세그먼트 분할 → 세그먼트별 Catmull-Rom
+  let d = '';
+  let segStart = 0;
+  for (let i = 0; i <= simplified.length; i++) {
+    if (i === simplified.length || corners.has(i)) {
+      const end = Math.min(i + 1, simplified.length);
+      const seg = simplified.slice(segStart, end);
+      if (seg.length >= 2) {
+        d += catmullRomToD(seg, segStart === 0);
+      }
+      segStart = i;
+    }
+  }
+  return d;
+}
+
+// ════════════════════════════════════════════════════════════════
+// 쿼터니언 (공 표면 점 회전 추적)
+//   당구공 점(dot) 시각화용. 쿼터니언 = [w, x, y, z].
+//   프레임별 각속도(ω)를 적분하여 공의 누적 자세(orientation) 추적.
+// ════════════════════════════════════════════════════════════════
+
+export type Quat = [number, number, number, number]; // [w, x, y, z]
+
+export function quatIdentity(): Quat { return [1, 0, 0, 0]; }
+
+export function quatFromAxisAngle(ax: number, ay: number, az: number, angle: number): Quat {
+  const half = angle / 2;
+  const s = Math.sin(half);
+  return [Math.cos(half), ax * s, ay * s, az * s];
+}
+
+export function quatMultiply(a: Quat, b: Quat): Quat {
+  return [
+    a[0]*b[0] - a[1]*b[1] - a[2]*b[2] - a[3]*b[3],
+    a[0]*b[1] + a[1]*b[0] + a[2]*b[3] - a[3]*b[2],
+    a[0]*b[2] - a[1]*b[3] + a[2]*b[0] + a[3]*b[1],
+    a[0]*b[3] + a[1]*b[2] - a[2]*b[1] + a[3]*b[0],
+  ];
+}
+
+/** 쿼터니언으로 3D 점 회전. */
+export function quatRotatePoint(q: Quat, x: number, y: number, z: number): [number, number, number] {
+  // p' = q * p * q⁻¹   (단위 쿼터니언이므로 q⁻¹ = conjugate)
+  const qp: Quat = [
+    -q[1]*x - q[2]*y - q[3]*z,
+     q[0]*x + q[2]*z - q[3]*y,
+     q[0]*y - q[1]*z + q[3]*x,
+     q[0]*z + q[1]*y - q[2]*x,
+  ];
+  return [
+    -qp[0]*q[1] + qp[1]*q[0] - qp[2]*q[3] + qp[3]*q[2],
+    -qp[0]*q[2] + qp[1]*q[3] + qp[2]*q[0] - qp[3]*q[1],
+    -qp[0]*q[3] - qp[1]*q[2] + qp[2]*q[1] + qp[3]*q[0],
+  ];
+}
+
+/**
+ * 프레임 배열 → 공 표면 점의 SVG 오프셋 + 가시성 배열.
+ * 점 초기 위치: (0.5R, 0, 0.866R) — 정수리에서 30° 기울어진 위치.
+ *   정수리(0,0,R)는 Z축 스핀 시 제자리에 멈추므로, 오프셋 필요.
+ *   30° 오프셋이면 모든 회전축에서 점 이동이 눈에 보임.
+ *
+ * @returns [{dx, dy, opacity}] — dx/dy는 공 중심 기준 SVG 오프셋 (px), opacity는 윗면 여부.
+ */
+export function computeDotFrames(
+  frames: EngineFrame[],
+  ballR: number,
+  ballRSvg: number,
+): { dx: number; dy: number; opacity: number }[] {
+  const dt = 1 / 60;
+  let q = quatIdentity();
+  const result: { dx: number; dy: number; opacity: number }[] = [];
+  // 초기 점 위치: 정수리에서 30° 기울어진 지점
+  const DOT_INIT_X = 0.5 * ballR;     // sin(30°) * R
+  const DOT_INIT_Y = 0;
+  const DOT_INIT_Z = 0.866 * ballR;   // cos(30°) * R
+
+  for (let i = 0; i < frames.length; i++) {
+    const rvw = frames[i].rvw;
+    if (i > 0) {
+      const wx = rvw[6], wy = rvw[7], wz = rvw[8];
+      const wMag = Math.sqrt(wx * wx + wy * wy + wz * wz);
+      if (wMag > 1e-9) {
+        const angle = wMag * dt;
+        const dq = quatFromAxisAngle(wx / wMag, wy / wMag, wz / wMag, angle);
+        q = quatMultiply(q, dq);
+        // 정규화 (누적 오차 방지, 50프레임마다)
+        if (i % 50 === 0) {
+          const n = Math.sqrt(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
+          if (n > 1e-9) { q[0] /= n; q[1] /= n; q[2] /= n; q[3] /= n; }
+        }
+      }
+    }
+    // 초기 점 위치 회전
+    const [px, py, pz] = quatRotatePoint(q, DOT_INIT_X, DOT_INIT_Y, DOT_INIT_Z);
+    // 엔진 좌표 → SVG 오프셋 (engineToSvg 축 매핑):
+    //   engine +x → SVG +y,  engine +y → SVG -x
+    const scale = ballRSvg / ballR;
+    const dx = -py * scale;
+    const dy = px * scale;
+    // 가시성: pz > 0 = 윗면 (보임), pz < 0 = 밑면 (안 보임)
+    // 부드러운 페이드: opacity = clamp(pz / R, 0, 1)
+    const opacity = Math.max(0, Math.min(1, pz / ballR));
+    result.push({ dx, dy, opacity });
+  }
+  return result;
+}
+
 /**
  * 큐대 SVG 좌표(tip = 큐볼 표면, butt = 큐대 후방).
  * 큐볼 → 적구 방향과 정확히 같은 직선 위에 큐대를 둔다.
