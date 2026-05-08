@@ -435,26 +435,38 @@ export function quatRotatePoint(q: Quat, x: number, y: number, z: number): [numb
   ];
 }
 
+/** 단일 점의 SVG 오프셋 + 가시성. */
+export interface DotPos {
+  dx: number;
+  dy: number;
+  opacity: number;
+}
+
 /**
- * 프레임 배열 → 공 표면 점의 SVG 오프셋 + 가시성 배열.
- * 점 초기 위치: (0.5R, 0, 0.866R) — 정수리에서 30° 기울어진 위치.
- *   정수리(0,0,R)는 Z축 스핀 시 제자리에 멈추므로, 오프셋 필요.
- *   30° 오프셋이면 모든 회전축에서 점 이동이 눈에 보임.
+ * 프레임 배열 → 공 표면 점 3개의 SVG 오프셋 + 가시성 배열.
+ * 점 초기 위치: 정수리 30° 아래에 정삼각형 배치 (120° 간격).
+ *   - 정수리(0,0,R)는 Z축 스핀 시 제자리이므로 오프셋 필수.
  *
- * @returns [{dx, dy, opacity}] — dx/dy는 공 중심 기준 SVG 오프셋 (px), opacity는 윗면 여부.
+ * @returns [frame0, frame1, ...] 각 frame에 3개 점 배열.
  */
 export function computeDotFrames(
   frames: EngineFrame[],
   ballR: number,
   ballRSvg: number,
-): { dx: number; dy: number; opacity: number }[] {
+): DotPos[][] {
   const dt = 1 / 60;
   let q = quatIdentity();
-  const result: { dx: number; dy: number; opacity: number }[] = [];
-  // 초기 점 위치: 정수리에서 30° 기울어진 지점
-  const DOT_INIT_X = 0.5 * ballR;     // sin(30°) * R
-  const DOT_INIT_Y = 0;
-  const DOT_INIT_Z = 0.866 * ballR;   // cos(30°) * R
+  const result: DotPos[][] = [];
+
+  // 초기 점 위치 3개 — 정삼각형 (30° latitude, 120° 간격)
+  const sin30 = 0.5, cos30 = 0.866;
+  const DOT_INITS: [number, number, number][] = [
+    [sin30 * ballR, 0, cos30 * ballR],                                  // 0°
+    [-sin30 * 0.5 * ballR, sin30 * cos30 * ballR, cos30 * ballR],       // 120° (≈ -0.25R, 0.433R)
+    [-sin30 * 0.5 * ballR, -sin30 * cos30 * ballR, cos30 * ballR],      // 240° (≈ -0.25R, -0.433R)
+  ];
+
+  const scale = ballRSvg / ballR;
 
   for (let i = 0; i < frames.length; i++) {
     const rvw = frames[i].rvw;
@@ -472,17 +484,18 @@ export function computeDotFrames(
         }
       }
     }
-    // 초기 점 위치 회전
-    const [px, py, pz] = quatRotatePoint(q, DOT_INIT_X, DOT_INIT_Y, DOT_INIT_Z);
-    // 엔진 좌표 → SVG 오프셋 (engineToSvg 축 매핑):
-    //   engine +x → SVG +y,  engine +y → SVG -x
-    const scale = ballRSvg / ballR;
-    const dx = -py * scale;
-    const dy = px * scale;
-    // 가시성: pz > 0 = 윗면 (보임), pz < 0 = 밑면 (안 보임)
-    // 부드러운 페이드: opacity = clamp(pz / R, 0, 1)
-    const opacity = Math.max(0, Math.min(1, pz / ballR));
-    result.push({ dx, dy, opacity });
+
+    const dots: DotPos[] = [];
+    for (const [ix, iy, iz] of DOT_INITS) {
+      const [px, py, pz] = quatRotatePoint(q, ix, iy, iz);
+      // 엔진 좌표 → SVG 오프셋: engine +x → SVG +y, engine +y → SVG -x
+      dots.push({
+        dx: -py * scale,
+        dy: px * scale,
+        opacity: Math.max(0, Math.min(1, pz / ballR)),
+      });
+    }
+    result.push(dots);
   }
   return result;
 }

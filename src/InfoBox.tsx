@@ -120,7 +120,6 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
   const sys = useAppStore((s) => s.sys);
   const simRev = useAppStore((s) => s.simRev);
   const setCue = useAppStore((s) => s.setCue);
-  const setBallPos = useAppStore((s) => s.setBallPos);
   const setInfoBoxPos = useAppStore((s) => s.setInfoBoxPos);
   const setInfoBoxActive = useAppStore((s) => s.setInfoBoxActive);
   const runSimulation = useAppStore((s) => s.runSimulation);
@@ -419,10 +418,9 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
   // 다이얼 큐볼 위치는 항상 중심(CUE_BALL_DIAL_CX) 고정 — 당점 회전 표시 전용.
   // (이전 버전: cueCx 평행이동에 따라 마커도 이동 → 박스 밖으로 나가는 시각 버그)
 
-  // 큐볼 안 흰 영역 — 탭(짧은 터치)→ 당점 a/b, 드래그(긴 이동)→ 테이블 위 수구 위치 이동.
-  // 기준: 누적 이동 거리 DRAG_THRESHOLD(client px) 미만이면 당점, 이상이면 위치 이동.
+  // 큐볼 안 흰 영역 — 탭(짧은 터치)→ 당점 a/b, 드래그(긴 이동)→ 큐대 각도(phi) 미세 조절.
+  // 수구를 좌우로 드래그하면 mirror 모델에서 두 공이 벌어지며 두께/phi가 바뀜.
   const DRAG_THRESHOLD = 8; // client pixel
-  const CUE_POS_SENSITIVITY = 0.004; // 다이얼 드래그 1 SVG px ≈ 4mm 엔진 이동
   const handleDialPointerDown = useCallback(
     (e: React.PointerEvent<SVGCircleElement>) => {
       e.preventDefault();
@@ -439,19 +437,19 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
       const clamped = Math.min(1, ratio);
       const sign = dialGroup ? (dialGroup.cueCx >= CUE_BALL_DIAL_CX ? 1 : -1) : 1;
       const cxDiff = clamped * TARGET_CX_DIFF_MAX;
-      const cueDialCxAtStart = CUE_BALL_DIAL_CX - (cxDiff / 2) * sign;
+      const cueDialCxAtStart = CUE_BALL_DIAL_CX + (cxDiff / 2) * sign;
 
       const startClientX = e.clientX;
       const startClientY = e.clientY;
-      let mode: 'undecided' | 'position' = 'undecided';
+      let mode: 'undecided' | 'phi' = 'undecided';
 
-      // 위치 이동 모드용 — 시작 시점 수구 엔진 좌표
-      const cueBall = sys.balls[sys.cueBallId];
-      const startEx = cueBall ? cueBall.rvw[0] : 0;
-      const startEy = cueBall ? cueBall.rvw[1] : 0;
+      // phi 모드용 — dialGroup 캡처 (드래그 시작 시점의 데이터)
+      const startCueCx = dialGroup?.cueCx ?? CUE_BALL_DIAL_CX;
+      const phiTargetDeg = dialGroup?.phiTargetDeg ?? 0;
+      const ballDistance = dialGroup?.distance ?? 0.5;
+      const ballR = sys.balls[sys.cueBallId]?.params.R ?? 0.0307;
       const ctm = svg.getScreenCTM();
-      const scaleX = ctm ? 1 / Math.abs(ctm.a) : 1;
-      const scaleY = ctm ? 1 / Math.abs(ctm.d) : 1;
+      const svgPerPx = ctm ? 1 / Math.abs(ctm.a) : 1;
 
       // 당점 a/b 적용 함수
       const applyTip = (clientX: number, clientY: number) => {
@@ -473,8 +471,7 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
         setCue({ a, b });
       };
 
-      // pointer down 시점에는 당점 적용하지 않음 — 드래그 여부 확인 후 결정.
-      // (즉시 적용 시 드래그 의도인데 당점이 바뀌는 부작용)
+      // pointer down 시점에는 적용하지 않음 — 드래그 vs 탭 판정 대기.
 
       const onMove = (ev: PointerEvent) => {
         const dxClient = ev.clientX - startClientX;
@@ -483,21 +480,32 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
 
         if (mode === 'undecided') {
           if (dist >= DRAG_THRESHOLD) {
-            mode = 'position';
+            mode = 'phi';
           } else {
-            // threshold 미만: 아직 판정 미정, 움직임 무시
             triggerActive();
             return;
           }
         }
 
-        if (mode === 'position') {
-          // 수구 위치 이동 (클라이언트 pixel delta → 엔진 좌표 delta)
-          const dxSvg = dxClient * scaleX;
-          const dySvg = dyClient * scaleY;
-          const newEx = startEx + dxSvg * CUE_POS_SENSITIVITY;
-          const newEy = startEy - dySvg * CUE_POS_SENSITIVITY;
-          setBallPos(sys.cueBallId, newEx, newEy);
+        if (mode === 'phi') {
+          // 수평 드래그 → 큐대 각도(phi) 조절
+          // dialGroup 역함수: cueCx → ratio → perp → cutAngle → phi
+          const dxSvg = dxClient * svgPerPx;
+          const newCueCx = startCueCx + dxSvg;
+          const halfRange = TARGET_CX_DIFF_MAX / 2;
+          const clampedCx = Math.max(CUE_BALL_DIAL_CX - halfRange,
+                                     Math.min(CUE_BALL_DIAL_CX + halfRange, newCueCx));
+          const newCxDiffSigned = (clampedCx - CUE_BALL_DIAL_CX) * 2;
+          const newSign = newCxDiffSigned >= 0 ? 1 : -1;
+          const newRatio = Math.min(1, Math.abs(newCxDiffSigned) / TARGET_CX_DIFF_MAX);
+          const newPerp = newRatio * 2 * ballR;
+          if (ballDistance > 0.01) {
+            const sinVal = Math.min(1, newPerp / ballDistance);
+            const newCutRad = Math.asin(sinVal);
+            const newDeltaDeg = (newCutRad * 180 / Math.PI) * newSign;
+            const newPhi = phiTargetDeg + newDeltaDeg;
+            setCue({ phi: newPhi, phiAuto: false });
+          }
         }
         triggerActive();
       };
@@ -521,7 +529,7 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
       target.addEventListener('pointerup', onUp as EventListener);
       target.addEventListener('pointercancel', onUp as EventListener);
     },
-    [pos.x, pos.y, setCue, setBallPos, sys, triggerActive, dialGroup]
+    [pos.x, pos.y, setCue, sys, triggerActive, dialGroup]
   );
 
   /** 다이얼 적구 색 (ray cast 결과 적구 색, 없으면 회색·반투명). */
@@ -627,16 +635,16 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
       <g transform={`translate(${DIAL_X}, ${DIAL_Y})`}>
         {/* mirror 모델: 두 공 가운데 = 당점 chip 가운데 (절대 cx=56, group 안 cx=20).
             8/8 (ratio=0): 큐볼·적구 모두 cx=20 (동심, 정타)
-            4/8 (ratio=0.5): 큐볼 cx=20-14, 적구 cx=20+14 (좌우 대칭, 50% 겹침)
-            0/8 (ratio=1.0): 큐볼 cx=20-28, 적구 cx=20+28 (가장자리만 닿음, 스침)
-            cue.phi 부호 (deltaDeg sign)에 따라 좌우 swap. */}
+            4/8 (ratio=0.5): 큐볼·적구 ±14 분리 (50% 겹침)
+            0/8 (ratio=1.0): 큐볼·적구 ±28 분리 (가장자리만 닿음, 스침)
+            실제 충돌 시 위치와 동일하게 배치. */}
         {(() => {
           const ratio = dialGroup ? dialGroup.ratioPerp : 0;
           const clamped = Math.min(1, ratio);
           const sign = dialGroup ? (dialGroup.cueCx >= CUE_BALL_DIAL_CX ? 1 : -1) : 1;
           const cxDiff = clamped * TARGET_CX_DIFF_MAX;
-          const cueDialCx = CUE_BALL_DIAL_CX - (cxDiff / 2) * sign;
-          const targetDialCx = CUE_BALL_DIAL_CX + (cxDiff / 2) * sign;
+          const cueDialCx = CUE_BALL_DIAL_CX + (cxDiff / 2) * sign;
+          const targetDialCx = CUE_BALL_DIAL_CX - (cxDiff / 2) * sign;
 
           return (
             <>
@@ -653,7 +661,7 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
                   pointerEvents="none"
                 />
               )}
-              {/* 2. 큐볼 (탭 = 당점 a/b, 드래그 = 테이블 위 수구 위치 미세 이동) */}
+              {/* 2. 큐볼 (탭 = 당점 a/b, 드래그 = 큐대 각도 phi 미세 조절) */}
               <circle
                 cx={cueDialCx}
                 cy={0}

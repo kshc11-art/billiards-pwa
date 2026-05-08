@@ -161,23 +161,31 @@ export default function Table() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sys, simRev, animFrame, result]);
 
-  // ── 수구 점(dot) 위치 — 프레임별 쿼터니언 적분 ────────
-  const cueBallDot = useMemo(() => {
-    const cueBallId = sys.cueBallId;
-    const cueBall = sys.balls[cueBallId];
-    if (!cueBall) return null;
-    const cueBallFrames = result?.frames?.[cueBallId];
-    if (!cueBallFrames || cueBallFrames.length < 2) return null;
-    return computeDotFrames(cueBallFrames, cueBall.params.R, BALL_R_SVG);
+  // ── 공 표면 점(dot) — 흰공·노란공 각 3개 ────────
+  // 프레임별 쿼터니언 적분으로 물리 기반 회전 추적.
+  const ballDots = useMemo(() => {
+    if (!result?.frames) return null;
+    const out: Record<string, ReturnType<typeof computeDotFrames>> = {};
+    for (const id of ['white', 'yellow']) {
+      const ball = sys.balls[id];
+      const frames = result.frames[id];
+      if (!ball || !frames || frames.length < 2) continue;
+      out[id] = computeDotFrames(frames, ball.params.R, BALL_R_SVG);
+    }
+    return Object.keys(out).length > 0 ? out : null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result, sys]);
 
   // 현재 프레임의 점 위치 (애니메이션 중에만)
-  const dotNow = useMemo(() => {
-    if (!cueBallDot || animFrame < 0) return null;
-    const idx = Math.min(animFrame, cueBallDot.length - 1);
-    return cueBallDot[idx];
-  }, [cueBallDot, animFrame]);
+  const dotsNow = useMemo(() => {
+    if (!ballDots || animFrame < 0) return null;
+    const out: Record<string, ReturnType<typeof computeDotFrames>[0]> = {};
+    for (const [id, frames] of Object.entries(ballDots)) {
+      const idx = Math.min(animFrame, frames.length - 1);
+      out[id] = frames[idx];
+    }
+    return out;
+  }, [ballDots, animFrame]);
 
   // 공 드래그
   const handleBallPointerDown = useCallback(
@@ -305,9 +313,17 @@ export default function Table() {
       {/* 공 (드래그 가능) — 진로 path 아래 */}
       <g data-layer="balls">
         {Object.entries(ballSvg).map(([id, [x, y]]) => {
-          const isCue = id === sys.cueBallId;
           const fill = BALL_FILL[id] ?? '#cccccc';
           const stroke = BALL_STROKE[id] ?? '#444';
+          const hasDots = id === 'white' || id === 'yellow';
+          const dotColor = id === 'white' ? '#D63030' : '#5A2E0E'; // 흰공: 빨강, 노란공: 갈색
+          const dots = hasDots ? dotsNow?.[id] : null;
+          // 정지 시 기본 점 위치 (정삼각형, 30° latitude)
+          const defaultDots = [
+            { dx: 0, dy: 0.5 * BALL_R_SVG, opacity: 1 },
+            { dx: -0.433 * BALL_R_SVG, dy: -0.25 * BALL_R_SVG, opacity: 1 },
+            { dx: 0.433 * BALL_R_SVG, dy: -0.25 * BALL_R_SVG, opacity: 1 },
+          ];
           return (
             <g key={id}>
               <circle
@@ -320,17 +336,19 @@ export default function Table() {
                 style={{ cursor: 'grab', touchAction: 'none' }}
                 onPointerDown={(e) => handleBallPointerDown(e, id)}
               />
-              {/* 수구 점(dot) — 실제 당구공처럼 표면 점 표시 */}
-              {isCue && (
-                <circle
-                  cx={x + (dotNow ? dotNow.dx : 0)}
-                  cy={y + (dotNow ? dotNow.dy : 0)}
-                  r={dotNow ? 1.8 : 2}
-                  fill="#D63030"
-                  fillOpacity={dotNow ? dotNow.opacity : 1}
-                  pointerEvents="none"
-                />
-              )}
+              {/* 표면 점 3개 — 흰공·노란공 (애니메이션 중: 물리 회전, 정지 시: 기본 위치) */}
+              {hasDots &&
+                (dots ?? defaultDots).map((d, i) => (
+                  <circle
+                    key={`dot-${id}-${i}`}
+                    cx={x + d.dx}
+                    cy={y + d.dy}
+                    r={1.6}
+                    fill={dotColor}
+                    fillOpacity={d.opacity}
+                    pointerEvents="none"
+                  />
+                ))}
             </g>
           );
         })}

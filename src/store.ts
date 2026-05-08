@@ -838,13 +838,15 @@ export const useAppStore = create<AppState>()(
           ball.rvw[6] = ball.rvw[7] = ball.rvw[8] = 0; // ω=0
           ball.state = STATIONARY;
         }
-        // phi 재계산 (phiAuto일 때만)
-        const phi = cue.phiAuto ? recalculatePhi(sys, cue.phi) : cue.phi;
+        // 수구 교대: white → yellow → white (3쿠션·4구 공통)
+        sys.cueBallId = sys.cueBallId === 'white' ? 'yellow' : 'white';
+        // phi 재계산 (새 수구 기준)
+        const phi = recalculatePhi(sys, cue.phi);
         set({
           simRev: get().simRev + 1,
           result: null,
           animFrame: -1,
-          cue: { ...cue, phi },
+          cue: { ...cue, phi, phiAuto: true },
         });
         // 새 위치 기준 미리보기 시뮬 자동 실행
         scheduleAutoSim(get);

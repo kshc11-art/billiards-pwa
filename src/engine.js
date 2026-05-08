@@ -53,7 +53,7 @@ export const MIN_DIST = 1e-6;
 // 변경 내역:
 //   u_r 0.01 → 0.012  (한국 평균 펠트 — 한국 당구장 환경)
 //   e_b 0.95 → 0.93   (한국 페놀릭 공 — 한국 당구공 표준)
-//   f_c 0.20 → 0.10   (Running/Reverse english 효과 보정)
+//   f_c 0.20 → 0.14   (쿠션 english 효과 + 반사 후 커브 최적화)
 // 별도 stick-ball.js의 a 부호 뒤집기는 한·외 공통 표준 클럭 직관 매핑.
 export const DEFAULT_BALL_PARAMS = Object.freeze({
   m:   0.170097,                  // 질량 (kg)
@@ -64,7 +64,7 @@ export const DEFAULT_BALL_PARAMS = Object.freeze({
   u_b: 0.05,                     // 공-공 마찰계수 (legacy 'average' 모드용; Alciatore 사용 시 무관)
   e_b: 0.93,                     // 공-공 반발계수 (한국 페놀릭 공)
   e_c: 0.85,                     // 공-쿠션 반발계수 (Pooltool 기본 유지)
-  f_c: 0.10,                     // 공-쿠션 마찰계수 (한국 직관 부합)
+  f_c: 0.14,                     // 공-쿠션 마찰계수 (0.10→0.14: 반사 후 커브 268°→2°, english Δ 유지)
   g:   9.81,                     // 중력가속도 (m/s²)
 });
 
