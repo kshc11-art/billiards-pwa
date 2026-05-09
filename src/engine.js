@@ -1592,9 +1592,11 @@ export function resolveStickBall(rvw, params, ball_m, ball_R) {
   const [vT, wT] = cueStrike(ball_m, cue_M, ball_R, V0, phi, theta, aContact, bContact);
 
   // ── PR #182 Squirt (deflection) ──
-  // 사이드 타점에서 큐 끝의 효과 질량으로 인한 v 편향.
-  // alpha < 0 = 오른쪽 편향, alpha > 0 = 왼쪽 편향 (Pooltool 좌표계 기준).
-  if (squirt_throttle > 0) {
+  // 학습 도구 특성: phi = 공이 가는 방향 (조준선 = 궤적).
+  // squirt는 비활성: 당점을 바꿔도 초기 방향은 phi 그대로.
+  // 사이드 스핀 효과(커브, throw)는 ω를 통해 정상 작동.
+  // squirt_throttle > 0 && false: 명시적 비활성 (필요 시 복원 가능)
+  if (squirt_throttle > 0 && false) {
     const alpha = getSquirtAngle(ball_m, cue_end_mass, aContact, squirt_throttle);
     const vRotated = new Float64Array(3);
     coordRotate(vRotated, 0, vT, 0, alpha);
