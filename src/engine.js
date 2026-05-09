@@ -1042,7 +1042,7 @@ export function han2005(rvw, xy_normal, R, m, h, e_c, f_c) {
  * @param {number} cushion_height - 쿠션 높이 (m)
  * @returns {[Float64Array, number]} [새 rvw, SLIDING]
  */
-export function resolveBallLinearCushion(rvw, cushion, params, cushion_height) {
+export function resolveBallLinearCushion(rvw, cushion, params, cushion_height, prevState) {
   // 법선 방향: 공의 속도와 같은 방향이어야 함 (공이 쿠션에 다가가는 중)
   let nx = cushion.normal_xy[0], ny = cushion.normal_xy[1];
   const vdot = rvw[3]*nx + rvw[4]*ny;
@@ -1050,6 +1050,19 @@ export function resolveBallLinearCushion(rvw, cushion, params, cushion_height) {
 
   const normal = new Float64Array([nx, ny, 0]);
   const out = han2005(rvw, normal, params.R, params.m, cushion_height, params.e_c, params.f_c);
+
+  // 쿠션 반사 후 SLIDING 재진입 방지:
+  //   실제 당구에서 쿠션 반사 후 펠트가 즉시 공을 그립 → 거의 즉시 ROLLING 복귀.
+  //   원본 Pooltool은 항상 SLIDING 반환 → 반사 후 장시간 SLIDING (커브+급감속).
+  //   수정: 충돌 전 ROLLING이었으면 ωx/ωy를 새 v에 맞춰 ROLLING 유지.
+  //         ωz(사이드 스핀)는 보존 → english 효과 유지.
+  if (prevState === ROLLING || prevState === undefined) {
+    const R = params.R;
+    out[6] = -out[4] / R;  // ωx = -vy/R (rolling 조건)
+    out[7] =  out[3] / R;  // ωy = vx/R
+    // ωz (out[8])는 han2005 결과 유지 (english 효과)
+    return [out, ROLLING];
+  }
 
   return [out, SLIDING];
 }
@@ -1510,7 +1523,7 @@ export function cueStrike(m, M, R, V0, phi_deg, theta_deg, a, b) {
   //   센터(b=0): ω=0 → 50% rolling (sliding 거리 절반)
   //   밀어치기(b>0): ω > rolling → 바이어스 미적용 (topspin 보존)
   //   끌어치기(b<0): ω < 0 → 바이어스 미적용 (backspin 보존)
-  const NATURAL_ROLLING_BIAS = 0.50;
+  const NATURAL_ROLLING_BIAS = 0.85;
   const rolling_wx = v * cos(theta) / R;
   // 바이어스 적용 조건: 현재 ωx가 0과 rolling 사이에 있을 때만
   // (= 큐 타격으로 부여된 spin이 rolling보다 적은 경우)
@@ -2174,7 +2187,7 @@ export function simulate(system, opts = {}) {
       const pre = ball.rvw.slice();
 
       const [newRvw, newState] = resolveBallLinearCushion(
-        ball.rvw, cushion, ball.params, cushion.height,
+        ball.rvw, cushion, ball.params, cushion.height, ball.state,
       );
       ball.rvw = newRvw;
       ball.state = newState;
