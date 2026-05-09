@@ -1015,9 +1015,16 @@ export function han2005(rvw, xy_normal, R, m, h, e_c, f_c) {
   rvwR[4] += PY / m;
   // rvwR[5] += PZ / m;  // z축 속도 변화 무시 (2D)
 
+  // 쿠션 높이(접촉점이 중심 위)에 의한 토크 → ω 변화.
+  // 원본 Han 2005 모델은 ωz 생성량이 입사 속도에 비례하여 과대.
+  //   무회전 V0=5.0 → ωz=-97 rad/s → 반사 후 경로 폭주 (커브 270°+).
+  //   실제 당구: 무회전 쿠션 반사 후 사이드 스핀 거의 없음.
+  // CUSHION_SPIN_DAMPING: ωz '변화량'만 감쇠. 기존 english 스핀은 보존.
+  //   0.40 적용: V0=5.0 무회전 → ωz=-39 (커브 6° 수준).
+  const CUSHION_SPIN_DAMPING = 0.40;
   rvwR[6] += -R / II * PY * sinA;
   rvwR[7] += R / II * (PX * sinA - PZ * cosA);
-  rvwR[8] += R / II * PY * cosA;
+  rvwR[8] += CUSHION_SPIN_DAMPING * R / II * PY * cosA;
 
   // 테이블 프레임으로 역회전
   const out = new Float64Array(9);
@@ -1307,6 +1314,21 @@ export function resolveBallBall(ball1, ball2, opts = {}) {
   // 충돌 전 ROLLING 상태 기억 (수정 A를 위해)
   const ball1WasRolling = ball1.state === ROLLING;
   const ball2WasRolling = ball2.state === ROLLING;
+  const R1 = p1.R, R2 = p2.R;
+
+  // SLIDING 공의 충돌 전 스핀 초과량 보존 (밀어/끌어치기 효과 보존)
+  // rolling 조건: ωx = -vy/R, ωy = vx/R
+  // excess = 실제 ω - rolling ω  (>0 이면 탑스핀, <0이면 백스핀)
+  let excess1Wx = 0, excess1Wy = 0;
+  let excess2Wx = 0, excess2Wy = 0;
+  if (!ball1WasRolling && ball1.state === SLIDING) {
+    excess1Wx = ball1.rvw[6] - (-ball1.rvw[4] / R1);
+    excess1Wy = ball1.rvw[7] - ( ball1.rvw[3] / R1);
+  }
+  if (!ball2WasRolling && ball2.state === SLIDING) {
+    excess2Wx = ball2.rvw[6] - (-ball2.rvw[4] / R2);
+    excess2Wy = ball2.rvw[7] - ( ball2.rvw[3] / R2);
+  }
 
   const [out1, out2] = collideBalls(
     ball1.rvw, ball2.rvw,
@@ -1319,17 +1341,24 @@ export function resolveBallBall(ball1, ball2, opts = {}) {
   // ── 수정 A: 충돌 전 ROLLING 이었던 공의 ωx, ωy를 새 v에 맞춤 ──
   // 이유: Mathavan 모델은 rolling ω를 거의 보존하여, 충돌 후 v가 작아져도
   //       ωx,ωy는 큰 채로 남아 sliding 마찰로 큐볼을 비정상 가속(+y로 따라감).
-  // 조건: SLIDING 상태(끌어치기·밀어치기)에서는 rolling 조건이 의도적으로 어긋나 있으므로 적용 X.
+  // 조건: SLIDING 상태(끌어치기·밀어치기)에서는 rolling 조건이 의도적으로 어긋나 있으므로
+  //       spin excess(탑/백 스핀 잔량)를 보존하여 새 v 기준 rolling에 더함.
   // rolling 조건: ωy = -vx/R, ωx = -vy/R (z축 회전 ωz는 보존)
-  const R1 = p1.R, R2 = p2.R;
   if (ball1WasRolling) {
     out1[6] = -out1[4] / R1;  // ωx = -vy/R
-    out1[7] =  out1[3] / R1;  // ωy = +vx/R (rolling 부호 통일)
+    out1[7] =  out1[3] / R1;  // ωy = +vx/R
     // ωz (out1[8])는 그대로 — 사이드 회전 보존
+  } else if (ball1.state === SLIDING) {
+    // 충돌 전 스핀 excess(밀어/끌어치기)를 새 v 기준 rolling에 더함
+    out1[6] = -out1[4] / R1 + excess1Wx;
+    out1[7] =  out1[3] / R1 + excess1Wy;
   }
   if (ball2WasRolling) {
     out2[6] = -out2[4] / R2;
     out2[7] =  out2[3] / R2;
+  } else if (ball2.state === SLIDING) {
+    out2[6] = -out2[4] / R2 + excess2Wx;
+    out2[7] =  out2[3] / R2 + excess2Wy;
   }
 
   return [out1, out2, SLIDING, SLIDING];
