@@ -458,13 +458,27 @@ export function computeDotFrames(
   let q = quatIdentity();
   const result: DotPos[][] = [];
 
-  // 초기 점 위치 3개 — 정삼각형 (30° latitude, 120° 간격)
-  const sin30 = 0.5, cos30 = 0.866;
-  const DOT_INITS: [number, number, number][] = [
-    [sin30 * ballR, 0, cos30 * ballR],                                  // 0°
-    [-sin30 * 0.5 * ballR, sin30 * cos30 * ballR, cos30 * ballR],       // 120° (≈ -0.25R, 0.433R)
-    [-sin30 * 0.5 * ballR, -sin30 * cos30 * ballR, cos30 * ballR],      // 240° (≈ -0.25R, -0.433R)
+  // 표면 점 6개 — 구면 전체에 비대칭 분포
+  //   θ(위도): 0°=꼭대기(앞), 90°=적도(가장자리), 180°=바닥(뒤)
+  //   φ(경도): 0°~360°
+  //   뒷면 점(θ>90°)은 보이지 않다가 회전 시 나타남 → 자연스러운 회전 시각화
+  const pts: [number, number][] = [
+    [30, 15],      // 앞면 상단 (보통 보임)
+    [55, 100],     // 앞면 중단 (보통 보임)
+    [85, 210],     // 적도 근처 (가장자리, 약하게 보임)
+    [110, 330],    // 뒷면 상단 (보통 안 보임, 회전 시 등장)
+    [140, 60],     // 뒷면 하단 (보통 안 보임)
+    [45, 270],     // 앞면 우측 (보통 보임)
   ];
+  const DOT_INITS: [number, number, number][] = pts.map(([thetaDeg, phiDeg]) => {
+    const t = thetaDeg * Math.PI / 180;
+    const p = phiDeg * Math.PI / 180;
+    return [
+      Math.sin(t) * Math.cos(p) * ballR,
+      Math.sin(t) * Math.sin(p) * ballR,
+      Math.cos(t) * ballR,
+    ];
+  });
 
   const scale = ballRSvg / ballR;
 
@@ -477,7 +491,6 @@ export function computeDotFrames(
         const angle = wMag * dt;
         const dq = quatFromAxisAngle(wx / wMag, wy / wMag, wz / wMag, angle);
         q = quatMultiply(q, dq);
-        // 정규화 (누적 오차 방지, 50프레임마다)
         if (i % 50 === 0) {
           const n = Math.sqrt(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
           if (n > 1e-9) { q[0] /= n; q[1] /= n; q[2] /= n; q[3] /= n; }
@@ -488,11 +501,12 @@ export function computeDotFrames(
     const dots: DotPos[] = [];
     for (const [ix, iy, iz] of DOT_INITS) {
       const [px, py, pz] = quatRotatePoint(q, ix, iy, iz);
-      // 엔진 좌표 → SVG 오프셋: engine +x → SVG +y, engine +y → SVG -x
+      const nz = pz / ballR; // -1 ~ +1 (뒷면~앞면)
+      if (nz <= 0.05) continue; // 뒷면 + 가장자리 극단: 완전 숨김
       dots.push({
         dx: -py * scale,
         dy: px * scale,
-        opacity: Math.max(0, Math.min(1, pz / ballR)),
+        opacity: Math.min(1, nz * 1.2), // 부드러운 페이드
       });
     }
     result.push(dots);

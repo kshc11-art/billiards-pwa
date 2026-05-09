@@ -253,6 +253,11 @@ export default function Table() {
         <filter id="ballShadow" x="-30%" y="-20%" width="160%" height="160%">
           <feDropShadow dx="1" dy="1.5" stdDeviation="1.8" floodColor="#000020" floodOpacity="0.35" />
         </filter>
+        {/* 공 하이라이트 (작은 흰색 반사점) */}
+        <radialGradient id="ballHighlight" cx="0.32" cy="0.28" r="0.25">
+          <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.6" />
+          <stop offset="1" stopColor="#FFFFFF" stopOpacity="0" />
+        </radialGradient>
 
         {/* 큐대 그라디언트는 CueStick.tsx 안에 정의 (큐대와 함께 분리). */}
 
@@ -318,12 +323,13 @@ export default function Table() {
           const fill = BALL_FILL[id] ?? '#cccccc';
           const stroke = BALL_STROKE[id] ?? '#444';
           const hasDots = id === 'white' || id === 'yellow';
-          const dotColor = id === 'white' ? '#D63030' : '#5A2E0E';
+          const dotColor = id === 'white' ? '#C83030' : '#4A2210';
           const dots = hasDots ? dotsNow?.[id] : null;
+          // 정지 시 기본 점 — 6개 중 앞면만 표시 (θ<90°인 3~4개)
           const defaultDots = [
-            { dx: 0, dy: 0.5 * BALL_R_SVG, opacity: 1 },
-            { dx: -0.433 * BALL_R_SVG, dy: -0.25 * BALL_R_SVG, opacity: 1 },
-            { dx: 0.433 * BALL_R_SVG, dy: -0.25 * BALL_R_SVG, opacity: 1 },
+            { dx: -1.06, dy: 3.96, opacity: 1.0 },   // 30°,15° (밝음)
+            { dx: -6.61, dy: -1.17, opacity: 0.69 },  // 55°,100° (중간)
+            { dx: 5.80, dy: 0, opacity: 0.85 },        // 45°,270° (중간)
           ];
           return (
             <g key={id}>
@@ -337,6 +343,14 @@ export default function Table() {
                 filter="url(#ballShadow)"
                 style={{ cursor: 'grab', touchAction: 'none' }}
                 onPointerDown={(e) => handleBallPointerDown(e, id)}
+              />
+              {/* 광택 하이라이트 */}
+              <circle
+                cx={x}
+                cy={y}
+                r={BALL_R_SVG}
+                fill="url(#ballHighlight)"
+                pointerEvents="none"
               />
               {/* 수구 표시 링 — 현재 수구에 파란 점선 링 표시 */}
               {id === sys.cueBallId && (
@@ -352,19 +366,16 @@ export default function Table() {
                   pointerEvents="none"
                 />
               )}
-              {/* 표면 점 3개 — 흰공·노란공 (애니메이션 중: 물리 회전, 정지 시: 기본 위치) */}
+              {/* 표면 점 — 흰공·노란공 (회전 시 자연스럽게 나타남/사라짐) */}
               {hasDots &&
                 (dots ?? defaultDots).map((d, i) => (
                   <circle
                     key={`dot-${id}-${i}`}
                     cx={x + d.dx}
                     cy={y + d.dy}
-                    r={2.2}
+                    r={1.2}
                     fill={dotColor}
-                    fillOpacity={d.opacity}
-                    stroke={id === 'white' ? '#8B2020' : '#3A1A08'}
-                    strokeWidth={0.4}
-                    strokeOpacity={d.opacity * 0.5}
+                    fillOpacity={d.opacity * 0.85}
                     pointerEvents="none"
                   />
                 ))}
