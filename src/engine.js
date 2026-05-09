@@ -59,11 +59,11 @@ export const DEFAULT_BALL_PARAMS = Object.freeze({
   m:   0.170097,                  // 질량 (kg)
   R:   0.028575,                  // 반지름 (m)
   u_s: 0.21,                     // 슬라이딩 마찰계수 (한국 평균)
-  u_r: 0.012,                    // 롤링 마찰계수 (한국 평균 펠트)
+  u_r: 0.016,                    // 롤링 마찰계수 (0.012→0.016: 총이동 7.0m→5.9m, 더 빨리 정지)
   u_sp_proportionality: 10*2/5/9, // 스피닝 마찰 비례상수
   u_b: 0.05,                     // 공-공 마찰계수 (legacy 'average' 모드용; Alciatore 사용 시 무관)
   e_b: 0.93,                     // 공-공 반발계수 (한국 페놀릭 공)
-  e_c: 0.85,                     // 공-쿠션 반발계수 (Pooltool 기본 유지)
+  e_c: 0.80,                     // 공-쿠션 반발계수 (0.85→0.80: 쿠션 후 감속 증가, V0 민감도 감소)
   f_c: 0.14,                     // 공-쿠션 마찰계수 (0.10→0.14: 반사 후 커브 268°→2°, english Δ 유지)
   g:   9.81,                     // 중력가속도 (m/s²)
 });
@@ -1506,15 +1506,17 @@ export function cueStrike(m, M, R, V0, phi_deg, theta_deg, a, b) {
 
   // ── 자연 rolling 바이어스 ──
   // 실제 당구: 큐 팁의 follow-through로 센터샷에도 약간의 topspin 존재.
-  // 이것이 없으면 센터샷 수구가 ω=0 → 1.6m sliding → dead ball 미작동.
-  // 바이어스: ω를 rolling 조건 방향으로 30% 이동.
-  //   센터: ω=0 → rolling*0.3 (sliding 거리 ~1.6m → ~0.8m)
-  //   밀어/끌어: 기존 ω + 30% rolling 블렌드 (상대 excess 유지)
-  // rolling 조건 (공 프레임): wB[0] = vB[1] / I_m * ... 이 아닌, 
-  //   vB[1] = -v*cos(theta), rolling ωx = -vB[1]/R = v*cos(theta)/R
-  const NATURAL_ROLLING_BIAS = 0.30;
-  const rolling_wx = v * cos(theta) / R;  // 공 프레임 rolling ωx
-  wB[0] = wB[0] + NATURAL_ROLLING_BIAS * (rolling_wx - wB[0]);
+  // 바이어스: ω가 rolling보다 적은 경우에만 rolling 방향으로 50% 이동.
+  //   센터(b=0): ω=0 → 50% rolling (sliding 거리 절반)
+  //   밀어치기(b>0): ω > rolling → 바이어스 미적용 (topspin 보존)
+  //   끌어치기(b<0): ω < 0 → 바이어스 미적용 (backspin 보존)
+  const NATURAL_ROLLING_BIAS = 0.50;
+  const rolling_wx = v * cos(theta) / R;
+  // 바이어스 적용 조건: 현재 ωx가 0과 rolling 사이에 있을 때만
+  // (= 큐 타격으로 부여된 spin이 rolling보다 적은 경우)
+  if (wB[0] >= 0 && wB[0] < rolling_wx) {
+    wB[0] = wB[0] + NATURAL_ROLLING_BIAS * (rolling_wx - wB[0]);
+  }
 
   // 테이블 프레임으로 회전 (phi + π/2)
   const rotAngle = phi + PI / 2;
