@@ -282,7 +282,8 @@ export interface AppState {
 
   runSimulation: (opts?: { preview?: boolean }) => void;
   /** 시뮬 최종 프레임의 공 위치를 sys에 반영 (연속 플레이). */
-  applyFinalPositions: () => void;
+  /** 시뮬 최종 프레임의 공 위치를 sys에 반영 (연속 플레이). 캡처된 데이터 사용. */
+  applyFinalPositions: (capturedFrames?: Record<string, {rvw: Float64Array}[]>, capturedVerdict?: ScoreVerdict) => void;
   /** 공 위치를 펠트 내 랜덤으로 재배치 (겹침 방지). */
   randomizeBalls: () => void;
   clearResult: () => void;
@@ -829,22 +830,27 @@ export const useAppStore = create<AppState>()(
       setAnimFrame: (frame) => set({ animFrame: frame }),
 
       // ── 연속 플레이: 시뮬 최종 위치 반영 ──────────────
-      applyFinalPositions: () => {
+      applyFinalPositions: (capturedFrames, capturedVerdict) => {
         const { sys, result, cue } = get();
-        if (!result?.frames || result.preview) return; // preview 결과는 적용 X
+        // 캡처된 데이터 우선, 없으면 현재 result 사용
+        const frames = capturedFrames ?? result?.frames;
+        const verdict = capturedVerdict ?? result?.verdict;
+        if (!frames) return;
+        // preview result만 있고 캡처 데이터 없으면 무시
+        if (!capturedFrames && result?.preview) return;
         // 각 공의 마지막 프레임 위치를 sys에 반영
-        for (const [id, frames] of Object.entries(result.frames)) {
+        for (const [id, fArr] of Object.entries(frames)) {
           const ball = sys.balls[id];
-          if (!ball || frames.length === 0) continue;
-          const last = frames[frames.length - 1];
+          if (!ball || fArr.length === 0) continue;
+          const last = fArr[fArr.length - 1];
           ball.rvw[0] = last.rvw[0];
           ball.rvw[1] = last.rvw[1];
-          ball.rvw[3] = ball.rvw[4] = ball.rvw[5] = 0; // v=0
-          ball.rvw[6] = ball.rvw[7] = ball.rvw[8] = 0; // ω=0
+          ball.rvw[3] = ball.rvw[4] = ball.rvw[5] = 0;
+          ball.rvw[6] = ball.rvw[7] = ball.rvw[8] = 0;
           ball.state = STATIONARY;
         }
-        // 수구 교대: 실패 시에만 교대 (실제 당구 규칙: 득점 시 같은 선수 계속)
-        const scored = result.verdict?.scored ?? false;
+        // 수구 교대: 실패 시에만 교대 (실제 당구 규칙)
+        const scored = verdict?.scored ?? false;
         if (!scored) {
           sys.cueBallId = sys.cueBallId === 'white' ? 'yellow' : 'white';
         }
@@ -856,7 +862,6 @@ export const useAppStore = create<AppState>()(
           animFrame: -1,
           cue: { ...cue, phi, phiAuto: true },
         });
-        // 새 위치 기준 미리보기 시뮬 자동 실행
         scheduleAutoSim(get);
       },
 

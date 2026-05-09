@@ -118,10 +118,12 @@ export default function Table() {
       const idx = Math.floor(elapsed * 60);
       if (idx >= maxFrames) {
         setAnimFrame(maxFrames - 1);
-        // 시뮬 끝 → 600ms 후 최종 위치 반영 + 수구 교대.
-        // applyFinalPositions 내부에서 preview 가드 처리.
+        // 시뮬 끝 → verdict+frames 캡처 후 600ms 대기.
+        // preview가 result를 덮어쓸 수 있으므로 반드시 캡처.
+        const cf = result.frames;
+        const cv = result.verdict;
         setTimeout(() => {
-          useAppStore.getState().applyFinalPositions();
+          useAppStore.getState().applyFinalPositions(cf, cv);
         }, 600);
         return;
       }
