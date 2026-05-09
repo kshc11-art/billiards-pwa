@@ -59,7 +59,7 @@ export default function AnalysisLayers() {
   const distanceMarkers = useMemo(
     () =>
       result && enabled.has('distance')
-        ? computeDistanceMarkers(result.frames, sys.cueBallId, sys.table)
+        ? computeDistanceMarkers(result.frames, sys.cueBallId, sys.table, result.events)
         : [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [result, enabled, sys.cueBallId, sys.table, simRev]

@@ -141,31 +141,38 @@ export function computeSeparation(
 
   const cueVMag = Math.hypot(cueV[0], cueV[1]);
   const tgtVMag = Math.hypot(tgtV[0], tgtV[1]);
-  if (cueVMag < 0.01 || tgtVMag < 0.01) return null;
+  // 적구가 거의 안 움직이면 충돌 아님
+  if (tgtVMag < 0.01) return null;
 
-  // 분리각 (engine 좌표계의 vector 사이 각도, 회전 무관)
-  const dot = (cueV[0] * tgtV[0] + cueV[1] * tgtV[1]) / (cueVMag * tgtVMag);
-  const angleDeg = (Math.acos(Math.max(-1, Math.min(1, dot))) * 180) / Math.PI;
+  // 분리각 — 수구 속도가 거의 0이면 (dead ball) 0°로 표시
+  let angleDeg = 0;
+  if (cueVMag > 0.05) {
+    const dot = (cueV[0] * tgtV[0] + cueV[1] * tgtV[1]) / (cueVMag * tgtVMag);
+    angleDeg = (Math.acos(Math.max(-1, Math.min(1, dot))) * 180) / Math.PI;
+  }
 
-  // 충돌점 = 두 공 중간을 SVG로 변환
   const contactEnginePos: [number, number] = [
     (cuePos[0] + tgtPos[0]) / 2,
     (cuePos[1] + tgtPos[1]) / 2,
   ];
-  const contact = engineToSvg(
-    contactEnginePos[0],
-    contactEnginePos[1],
-    table
-  );
+  const contact = engineToSvg(contactEnginePos[0], contactEnginePos[1], table);
 
-  // 단위 vector를 SVG 끝점으로. SVG_END = engineToSvg(POS + UNIT * SCALE_M).
-  // SCALE_M을 SEP_ARROW_LEN_SVG / scale로 잡으면 SVG에서 SEP_ARROW_LEN_SVG 픽셀 길이.
-  // engineToSvg의 scale = 646 / table.l (가로 모드 기준).
   const svgScale = 646 / table.l;
   const sclMeter = SEP_ARROW_LEN_SVG / svgScale;
+
+  // 수구 화살표 — 속도가 충분하면 방향 표시, 아니면 적구 방향 반대(=충돌 방향)
+  let cueUx: number, cueUy: number;
+  if (cueVMag > 0.05) {
+    cueUx = cueV[0] / cueVMag;
+    cueUy = cueV[1] / cueVMag;
+  } else {
+    // dead ball: 충돌점에 작은 원으로 표시 (화살표 길이 0)
+    cueUx = 0;
+    cueUy = 0;
+  }
   const cueEndEng: [number, number] = [
-    contactEnginePos[0] + (cueV[0] / cueVMag) * sclMeter,
-    contactEnginePos[1] + (cueV[1] / cueVMag) * sclMeter,
+    contactEnginePos[0] + cueUx * sclMeter,
+    contactEnginePos[1] + cueUy * sclMeter,
   ];
   const tgtEndEng: [number, number] = [
     contactEnginePos[0] + (tgtV[0] / tgtVMag) * sclMeter,
@@ -193,11 +200,27 @@ const POINT_M = 0.3175;
 export function computeDistanceMarkers(
   frames: Record<string, EngineFrame[]> | undefined,
   cueBallId: string,
-  table: EngineTable
+  table: EngineTable,
+  events?: EngineEvent[]
 ): DistanceMarker[] {
   if (!frames) return [];
   const cueFrames = frames[cueBallId];
   if (!cueFrames || cueFrames.length < 2) return [];
+
+  // 첫 충돌(쿠션 or 공) 시간까지만 거리 측정 (학습용으로 더 유용)
+  let maxTime = Infinity;
+  if (events) {
+    for (const e of events) {
+      if (e.type === 'ball_cushion' && e.ballId === cueBallId) {
+        maxTime = Math.min(maxTime, e.time);
+        break;
+      }
+      if (e.type === 'ball_ball' && Array.isArray(e.ids) && e.ids.includes(cueBallId)) {
+        maxTime = Math.min(maxTime, e.time);
+        break;
+      }
+    }
+  }
 
   const markers: DistanceMarker[] = [];
   let cumDist = 0;
@@ -205,6 +228,7 @@ export function computeDistanceMarkers(
   let nextLabelP = 1;
 
   for (let i = 1; i < cueFrames.length; i++) {
+    if (cueFrames[i].t > maxTime) break;
     const p = cueFrames[i - 1].rvw;
     const c = cueFrames[i].rvw;
     cumDist += Math.hypot(c[0] - p[0], c[1] - p[1]);
@@ -213,7 +237,7 @@ export function computeDistanceMarkers(
       markers.push({ svgX: sx, svgY: sy, label: `${nextLabelP}p` });
       nextAt += POINT_M;
       nextLabelP += 1;
-      if (nextLabelP > 30) return markers; // 안전 한계
+      if (nextLabelP > 30) return markers;
     }
   }
   return markers;
@@ -265,22 +289,22 @@ function estimateCut(
   };
 }
 
-/** cue.phi와 큐볼·1구 위치 차이로 두께(0~1) 추정. research.md 6.2 cut angle → fullness 매핑. */
+/** cue.phi와 큐볼·1구 위치 차이로 두께(0~1) 추정. perp/(2R) 직접 계산. */
 function estimateFullness(
   cuePhiDeg: number,
   cueBall: EngineBall,
   target: EngineBall
 ): number {
-  const { cutAngle } = estimateCut(cuePhiDeg, cueBall, target);
-  if (cutAngle < 7) return 1.0;
-  if (cutAngle < 17) return 0.875;
-  if (cutAngle < 22) return 0.75;
-  if (cutAngle < 27) return 0.625;
-  if (cutAngle < 34) return 0.5;
-  if (cutAngle < 49) return 0.375;
-  if (cutAngle < 65) return 0.25;
-  if (cutAngle < 75) return 0.125;
-  return 0;
+  const dx = target.rvw[0] - cueBall.rvw[0];
+  const dy = target.rvw[1] - cueBall.rvw[1];
+  const dist = Math.hypot(dx, dy);
+  if (dist < 0.001) return 1.0;
+  const phiRad = cuePhiDeg * Math.PI / 180;
+  const perpDist = Math.abs(dx * Math.sin(phiRad) - dy * Math.cos(phiRad));
+  const R = cueBall.params.R;
+  const ratio = perpDist / (2 * R);
+  if (ratio >= 1) return 0;
+  return Math.max(0, 1 - ratio);
 }
 
 /** 두께 + b(상하 회전) → 큐볼 분리각 (deg, 1구 진행축으로부터). */
@@ -307,24 +331,49 @@ export function computeAngleGuide(
 ): AngleGuide | null {
   const cueBall = sys.balls[sys.cueBallId];
   if (!cueBall) return null;
-  const targetEntry = Object.entries(sys.balls).find(
-    ([id]) => id !== sys.cueBallId
-  );
-  if (!targetEntry) return null;
-  const [, target] = targetEntry;
 
-  const cueSvg = engineToSvg(cueBall.rvw[0], cueBall.rvw[1], table);
+  // 조준 방향에 가장 가까운 적구 선택 (InfoBox의 aimedTargetId와 동일 로직)
+  const phiRad = cuePhi * Math.PI / 180;
+  const dirX = Math.cos(phiRad);
+  const dirY = Math.sin(phiRad);
+  let bestTarget: EngineBall | null = null;
+  let bestProj = -Infinity;
+  let bestPerp = Infinity;
+  for (const [id, ball] of Object.entries(sys.balls)) {
+    if (id === sys.cueBallId) continue;
+    const ex = ball.rvw[0] - cueBall.rvw[0];
+    const ey = ball.rvw[1] - cueBall.rvw[1];
+    const proj = ex * dirX + ey * dirY;
+    if (proj <= 0) continue; // 뒤에 있는 공 무시
+    const perp = Math.abs(ex * dirY - ey * dirX);
+    const R = cueBall.params.R;
+    if (perp > 2 * R * 3) continue; // 너무 멀리 빗나가는 공 무시
+    if (perp < bestPerp || (perp === bestPerp && proj < bestProj)) {
+      bestTarget = ball;
+      bestProj = proj;
+      bestPerp = perp;
+    }
+  }
+  if (!bestTarget) return null;
+  const target = bestTarget;
+
+  // 충돌 추정 위치 (수구 진행선과 적구 중심 가장 가까운 점)
+  const ex = target.rvw[0] - cueBall.rvw[0];
+  const ey = target.rvw[1] - cueBall.rvw[1];
+  const projLen = ex * dirX + ey * dirY;
+  const collisionEngX = cueBall.rvw[0] + dirX * projLen;
+  const collisionEngY = cueBall.rvw[1] + dirY * projLen;
+  const originSvg = engineToSvg(collisionEngX, collisionEngY, table);
+
   const tgtSvg = engineToSvg(target.rvw[0], target.rvw[1], table);
 
-  const dx = tgtSvg[0] - cueSvg[0];
-  const dy = tgtSvg[1] - cueSvg[1];
+  const dx = tgtSvg[0] - originSvg[0];
+  const dy = tgtSvg[1] - originSvg[1];
   const len = Math.hypot(dx, dy);
-  if (len < 1) return null;
-
   // 1구 진행 단위 vector (충돌선 연장 방향)
-  const ux = dx / len;
-  const uy = dy / len;
-  // +90° 수직 vector (큐볼 분리 기준 최대값)
+  const ux = len > 0.1 ? dx / len : 0;
+  const uy = len > 0.1 ? dy / len : 1;
+  // +90° 수직 vector
   const px = -uy;
   const py = ux;
 
@@ -342,16 +391,16 @@ export function computeAngleGuide(
   const cueDirY = uy * Math.cos(rad) + sign * py * Math.sin(rad);
 
   return {
-    origin: tgtSvg,
-    targetForward: [tgtSvg[0] + ux * ANGLE_ARM_SVG, tgtSvg[1] + uy * ANGLE_ARM_SVG],
-    cueDirection: [tgtSvg[0] + cueDirX * ANGLE_ARM_SVG, tgtSvg[1] + cueDirY * ANGLE_ARM_SVG],
+    origin: originSvg,
+    targetForward: [originSvg[0] + ux * ANGLE_ARM_SVG, originSvg[1] + uy * ANGLE_ARM_SVG],
+    cueDirection: [originSvg[0] + cueDirX * ANGLE_ARM_SVG, originSvg[1] + cueDirY * ANGLE_ARM_SVG],
     label: `${denominator8(fullness)} · ${Math.round(sepAngle)}°`,
   };
 }
 
 function denominator8(f: number): string {
   const e = Math.round(f * 8);
-  if (e <= 0) return '0/8';
+  if (e <= 0) return '빗나감';
   if (e >= 8) return '8/8';
   return `${e}/8`;
 }
