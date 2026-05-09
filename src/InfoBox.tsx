@@ -104,13 +104,14 @@ function tipsLabel(a: number, b: number): string {
  * 두께 라벨 — 사용자 직관 정확 매핑:
  *   - ratio 0 (perp=0) → 8/8 (완전 겹침, 정중앙)
  *   - ratio 0.875 (perp=1.75R) → 1/8 (살짝 겹침, 스침)
- *   - ratio 1 (perp=2R) → 0/8 (가장자리 정확 닿음 = 안 침)
- *   - ratio > 1 → 0/8 (빗나감)
+ *   - ratio 1 (perp=2R) → 빗나감 (가장자리 정확 닿음 = 경계)
+ *   - ratio > 1 → 빗나감 (확실히 빗나감)
  */
 function thicknessLabelByPerp(perp: number, R: number): string {
   const ratio = perp / (2 * R);
-  if (ratio > 1) return '0/8';
-  const eighths = Math.max(0, Math.min(8, 8 - Math.round(ratio * 8)));
+  if (ratio >= 1) return '빗나감';
+  // ratio 0~1 → 8/8 ~ 1/8 (항상 맞는 범위, 최소 1/8)
+  const eighths = Math.max(1, Math.min(8, Math.round((1 - ratio) * 8)));
   return `${eighths}/8`;
 }
 
@@ -437,14 +438,14 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
       const clamped = Math.min(1, ratio);
       const sign = dialGroup ? (dialGroup.cueCx >= CUE_BALL_DIAL_CX ? 1 : -1) : 1;
       const cxDiff = clamped * TARGET_CX_DIFF_MAX;
-      const cueDialCxAtStart = CUE_BALL_DIAL_CX + (cxDiff / 2) * sign;
+      const cueDialCxAtStart = CUE_BALL_DIAL_CX - (cxDiff / 2) * sign;
 
       const startClientX = e.clientX;
       const startClientY = e.clientY;
       let mode: 'undecided' | 'phi' = 'undecided';
 
-      // phi 모드용 — dialGroup 캡처 (드래그 시작 시점의 데이터)
-      const startCueCx = dialGroup?.cueCx ?? CUE_BALL_DIAL_CX;
+      // phi 모드용 — 렌더링 좌표 기준 시작 위치
+      const startCueCxRendered = cueDialCxAtStart;
       const phiTargetDeg = dialGroup?.phiTargetDeg ?? 0;
       const ballDistance = dialGroup?.distance ?? 0.5;
       const ballR = sys.balls[sys.cueBallId]?.params.R ?? 0.0307;
@@ -489,13 +490,16 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
 
         if (mode === 'phi') {
           // 수평 드래그 → 큐대 각도(phi) 조절
-          // dialGroup 역함수: cueCx → ratio → perp → cutAngle → phi
+          // 렌더링 좌표에서 드래그 → 모델 역변환 → phi
+          // 렌더: cueDialCx = CUE_BALL_DIAL_CX - (cxDiff/2)*sign
+          // 역변환: model_cxDiff_signed = 2*(CUE_BALL_DIAL_CX - rendered_cx)
           const dxSvg = dxClient * svgPerPx;
-          const newCueCx = startCueCx + dxSvg;
+          const newCueCxRendered = startCueCxRendered + dxSvg;
           const halfRange = TARGET_CX_DIFF_MAX / 2;
           const clampedCx = Math.max(CUE_BALL_DIAL_CX - halfRange,
-                                     Math.min(CUE_BALL_DIAL_CX + halfRange, newCueCx));
-          const newCxDiffSigned = (clampedCx - CUE_BALL_DIAL_CX) * 2;
+                                     Math.min(CUE_BALL_DIAL_CX + halfRange, newCueCxRendered));
+          // 렌더 좌표 → 모델 cxDiff (부호 반전: 렌더 왼쪽 = 모델 양수)
+          const newCxDiffSigned = 2 * (CUE_BALL_DIAL_CX - clampedCx);
           const newSign = newCxDiffSigned >= 0 ? 1 : -1;
           const newRatio = Math.min(1, Math.abs(newCxDiffSigned) / TARGET_CX_DIFF_MAX);
           const newPerp = newRatio * 2 * ballR;
@@ -559,7 +563,7 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
   // 라벨: 두께(aimedTargetId perp 기반)·시계·팁·V₀
   // 다이얼이 가리키는 적구를 기준으로 두께 계산 (yellow 고정 X — 다이얼과 일관).
   const labels = useMemo(() => {
-    let thickness = '0/8';
+    let thickness = '빗나감';
     const cueBall = sys.balls[sys.cueBallId];
     const target = aimedTargetId ? sys.balls[aimedTargetId] : null;
     if (cueBall && target) {
@@ -636,15 +640,15 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
         {/* mirror 모델: 두 공 가운데 = 당점 chip 가운데 (절대 cx=56, group 안 cx=20).
             8/8 (ratio=0): 큐볼·적구 모두 cx=20 (동심, 정타)
             4/8 (ratio=0.5): 큐볼·적구 ±14 분리 (50% 겹침)
-            0/8 (ratio=1.0): 큐볼·적구 ±28 분리 (가장자리만 닿음, 스침)
-            실제 충돌 시 위치와 동일하게 배치. */}
+            0/8 (ratio=1.0): 큐볼·적구 ±28 분리 (가장자리 = 빗나감 경계)
+            큐 방향(phi)에 따라 수구가 적구의 좌/우로 이동. */}
         {(() => {
           const ratio = dialGroup ? dialGroup.ratioPerp : 0;
           const clamped = Math.min(1, ratio);
           const sign = dialGroup ? (dialGroup.cueCx >= CUE_BALL_DIAL_CX ? 1 : -1) : 1;
           const cxDiff = clamped * TARGET_CX_DIFF_MAX;
-          const cueDialCx = CUE_BALL_DIAL_CX + (cxDiff / 2) * sign;
-          const targetDialCx = CUE_BALL_DIAL_CX - (cxDiff / 2) * sign;
+          const cueDialCx = CUE_BALL_DIAL_CX - (cxDiff / 2) * sign;
+          const targetDialCx = CUE_BALL_DIAL_CX + (cxDiff / 2) * sign;
 
           return (
             <>
@@ -666,8 +670,8 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
                 cx={cueDialCx}
                 cy={0}
                 r={CUE_BALL_DIAL_R}
-                fill="#FFFFFF"
-                stroke="#888"
+                fill={sys.cueBallId === 'yellow' ? '#F5D547' : '#FFFFFF'}
+                stroke={sys.cueBallId === 'yellow' ? '#806810' : '#888'}
                 strokeWidth={0.8}
                 style={{ cursor: 'grab', touchAction: 'none' }}
                 onPointerDown={handleDialPointerDown}
