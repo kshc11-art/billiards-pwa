@@ -230,21 +230,29 @@ export default function Table() {
     <g data-component="table">
       <defs>
         {/* 공 그라디언트 (좌상에서 빛이 들어오는 듯한 하이라이트) */}
-        <radialGradient id="ballWhite" cx="0.38" cy="0.32" r="0.7">
+        <radialGradient id="ballWhite" cx="0.35" cy="0.30" r="0.65">
           <stop offset="0" stopColor="#FFFFFF" />
-          <stop offset="0.6" stopColor="#E6E6E6" />
+          <stop offset="0.5" stopColor="#F0F0F0" />
+          <stop offset="0.85" stopColor="#C8C8C8" />
           <stop offset="1" stopColor="#888888" />
         </radialGradient>
-        <radialGradient id="ballYellow" cx="0.38" cy="0.32" r="0.7">
-          <stop offset="0" stopColor="#FFEA85" />
-          <stop offset="0.55" stopColor="#F5D547" />
+        <radialGradient id="ballYellow" cx="0.35" cy="0.30" r="0.65">
+          <stop offset="0" stopColor="#FFF4A8" />
+          <stop offset="0.4" stopColor="#F5D547" />
+          <stop offset="0.85" stopColor="#B89420" />
           <stop offset="1" stopColor="#7A6210" />
         </radialGradient>
-        <radialGradient id="ballRed" cx="0.38" cy="0.32" r="0.7">
-          <stop offset="0" stopColor="#FF7575" />
-          <stop offset="0.55" stopColor="#D63030" />
-          <stop offset="1" stopColor="#7A1818" />
+        <radialGradient id="ballRed" cx="0.35" cy="0.30" r="0.65">
+          <stop offset="0" stopColor="#FF8888" />
+          <stop offset="0.4" stopColor="#D63030" />
+          <stop offset="0.85" stopColor="#A01818" />
+          <stop offset="1" stopColor="#601010" />
         </radialGradient>
+
+        {/* 공 그림자 */}
+        <filter id="ballShadow" x="-30%" y="-20%" width="160%" height="160%">
+          <feDropShadow dx="1" dy="1.5" stdDeviation="1.8" floodColor="#000020" floodOpacity="0.35" />
+        </filter>
 
         {/* 큐대 그라디언트는 CueStick.tsx 안에 정의 (큐대와 함께 분리). */}
 
@@ -310,9 +318,8 @@ export default function Table() {
           const fill = BALL_FILL[id] ?? '#cccccc';
           const stroke = BALL_STROKE[id] ?? '#444';
           const hasDots = id === 'white' || id === 'yellow';
-          const dotColor = id === 'white' ? '#D63030' : '#5A2E0E'; // 흰공: 빨강, 노란공: 갈색
+          const dotColor = id === 'white' ? '#D63030' : '#5A2E0E';
           const dots = hasDots ? dotsNow?.[id] : null;
-          // 정지 시 기본 점 위치 (정삼각형, 30° latitude)
           const defaultDots = [
             { dx: 0, dy: 0.5 * BALL_R_SVG, opacity: 1 },
             { dx: -0.433 * BALL_R_SVG, dy: -0.25 * BALL_R_SVG, opacity: 1 },
@@ -327,6 +334,7 @@ export default function Table() {
                 fill={fill}
                 stroke={stroke}
                 strokeWidth="0.6"
+                filter="url(#ballShadow)"
                 style={{ cursor: 'grab', touchAction: 'none' }}
                 onPointerDown={(e) => handleBallPointerDown(e, id)}
               />
@@ -351,9 +359,12 @@ export default function Table() {
                     key={`dot-${id}-${i}`}
                     cx={x + d.dx}
                     cy={y + d.dy}
-                    r={1.6}
+                    r={2.2}
                     fill={dotColor}
                     fillOpacity={d.opacity}
+                    stroke={id === 'white' ? '#8B2020' : '#3A1A08'}
+                    strokeWidth={0.4}
+                    strokeOpacity={d.opacity * 0.5}
                     pointerEvents="none"
                   />
                 ))}

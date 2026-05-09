@@ -86,7 +86,6 @@ export default function CueStick() {
 
   return (
     <g data-layer="cue">
-      {/* userSpaceOnUse 그라디언트 — 수직 큐대도 정상 표시 */}
       <defs>
         <linearGradient
           id="cueStickGradient"
@@ -96,42 +95,86 @@ export default function CueStick() {
           x2={cueLine.tip[0]}
           y2={cueLine.tip[1]}
         >
-          <stop offset="0" stopColor="#3A2410" />
-          <stop offset="0.55" stopColor="#8B5A2B" />
-          <stop offset="1" stopColor="#D2A06D" />
+          <stop offset="0" stopColor="#2A1808" />
+          <stop offset="0.15" stopColor="#4A2A14" />
+          <stop offset="0.50" stopColor="#8B5A2B" />
+          <stop offset="0.85" stopColor="#C49A6C" />
+          <stop offset="1" stopColor="#D8B48A" />
         </linearGradient>
-        {/* 큐대 그림자 */}
         <filter id="cueShadow" x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="1" stdDeviation="1.2" floodOpacity="0.4" />
+          <feDropShadow dx="0.5" dy="1.5" stdDeviation="1.5" floodOpacity="0.45" />
         </filter>
       </defs>
-      <line
-        x1={cueLine.butt[0]}
-        y1={cueLine.butt[1]}
-        x2={cueLine.tip[0]}
-        y2={cueLine.tip[1]}
-        stroke="url(#cueStickGradient)"
-        strokeWidth="6.5"
-        strokeLinecap="round"
-        filter="url(#cueShadow)"
-        pointerEvents="none"
-      />
-      {/* 큐대 팁 */}
-      <circle
-        cx={cueLine.tip[0]}
-        cy={cueLine.tip[1]}
-        r="3.4"
-        fill="#F0F0F0"
-        pointerEvents="none"
-      />
-      {/* 회전 드래그용 invisible hit area */}
+
+      {/* 큐대 본체 (테이퍼: butt 7px → tip 4.5px) */}
+      {(() => {
+        const bx = cueLine.butt[0], by = cueLine.butt[1];
+        const tx = cueLine.tip[0], ty = cueLine.tip[1];
+        const len = Math.hypot(tx - bx, ty - by);
+        if (len < 1) return null;
+        const ux = (tx - bx) / len, uy = (ty - by) / len;
+        const px = -uy, py = ux; // 수직 방향
+        const bw = 3.5, tw = 2.2; // 반폭 (butt, tip)
+        // 페럴 위치 (팁에서 8px)
+        const ferruleLen = 8;
+        const fx = tx - ux * ferruleLen, fy = ty - uy * ferruleLen;
+        const fw = tw + (bw - tw) * (ferruleLen / len); // 페럴 폭
+        // 그립 밴드 위치 (butt에서 20-30px)
+        const g1x = bx + ux * 12, g1y = by + uy * 12;
+        const g2x = bx + ux * 28, g2y = by + uy * 28;
+        const gw1 = bw - (bw - tw) * (12 / len);
+        const gw2 = bw - (bw - tw) * (28 / len);
+
+        return (
+          <>
+            {/* 본체 (테이퍼 사다리꼴) */}
+            <polygon
+              points={`${bx + px*bw},${by + py*bw} ${fx + px*fw},${fy + py*fw} ${fx - px*fw},${fy - py*fw} ${bx - px*bw},${by - py*bw}`}
+              fill="url(#cueStickGradient)"
+              filter="url(#cueShadow)"
+              pointerEvents="none"
+            />
+            {/* 페럴 (흰색 고리) */}
+            <polygon
+              points={`${fx + px*fw},${fy + py*fw} ${tx + px*tw},${ty + py*tw} ${tx - px*tw},${ty - py*tw} ${fx - px*fw},${fy - py*fw}`}
+              fill="#E8E0D0"
+              stroke="#B8B0A0"
+              strokeWidth="0.3"
+              pointerEvents="none"
+            />
+            {/* 팁 (가죽, 둥근) */}
+            <circle
+              cx={tx}
+              cy={ty}
+              r={tw}
+              fill="#6DB4E8"
+              stroke="#4A90C4"
+              strokeWidth="0.4"
+              pointerEvents="none"
+            />
+            {/* 그립 밴드 */}
+            <line
+              x1={g1x + px*gw1} y1={g1y + py*gw1}
+              x2={g1x - px*gw1} y2={g1y - py*gw1}
+              stroke="#1A0E06" strokeWidth="1.5" pointerEvents="none"
+            />
+            <line
+              x1={g2x + px*gw2} y1={g2y + py*gw2}
+              x2={g2x - px*gw2} y2={g2y - py*gw2}
+              stroke="#1A0E06" strokeWidth="1.5" pointerEvents="none"
+            />
+          </>
+        );
+      })()}
+
+      {/* 회전 드래그용 invisible hit area (넓게) */}
       <line
         x1={cueLine.butt[0]}
         y1={cueLine.butt[1]}
         x2={cueLine.tip[0]}
         y2={cueLine.tip[1]}
         stroke="transparent"
-        strokeWidth="22"
+        strokeWidth="30"
         strokeLinecap="round"
         pointerEvents="stroke"
         style={{ cursor: 'grab', touchAction: 'none' }}
