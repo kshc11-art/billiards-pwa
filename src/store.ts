@@ -412,9 +412,14 @@ export const useAppStore = create<AppState>()(
         const { sys, cue } = get();
         const ball = sys.balls[id];
         if (!ball) return;
+        // 경계 클램프: 공이 쿠션 안쪽에만 위치하도록 (R + 1mm 여유)
+        const R = ball.params.R;
+        const margin = R + 0.001;
+        const clampedEx = Math.max(margin, Math.min(sys.table.w - margin, ex));
+        const clampedEy = Math.max(margin, Math.min(sys.table.l - margin, ey));
         // mutable update: rvw 직접 갱신 + 운동 상태 정지로 초기화
-        ball.rvw[0] = ex;
-        ball.rvw[1] = ey;
+        ball.rvw[0] = clampedEx;
+        ball.rvw[1] = clampedEy;
         ball.rvw[3] = ball.rvw[4] = ball.rvw[5] = 0; // v=0
         ball.rvw[6] = ball.rvw[7] = ball.rvw[8] = 0; // ω=0
         ball.state = STATIONARY;
@@ -838,8 +843,11 @@ export const useAppStore = create<AppState>()(
           ball.rvw[6] = ball.rvw[7] = ball.rvw[8] = 0; // ω=0
           ball.state = STATIONARY;
         }
-        // 수구 교대: white → yellow → white (3쿠션·4구 공통)
-        sys.cueBallId = sys.cueBallId === 'white' ? 'yellow' : 'white';
+        // 수구 교대: 실패 시에만 교대 (실제 당구 규칙: 득점 시 같은 선수 계속)
+        const scored = result.verdict?.scored ?? false;
+        if (!scored) {
+          sys.cueBallId = sys.cueBallId === 'white' ? 'yellow' : 'white';
+        }
         // phi 재계산 (새 수구 기준)
         const phi = recalculatePhi(sys, cue.phi);
         set({
@@ -855,6 +863,8 @@ export const useAppStore = create<AppState>()(
       // ── 랜덤 배치 ─────────────────────────────────────
       randomizeBalls: () => {
         const { sys, cue } = get();
+        // 수구를 white로 초기화 (예시/드릴과 일관성)
+        sys.cueBallId = 'white';
         const W = sys.table.w;
         const L = sys.table.l;
         const R = sys.balls[sys.cueBallId]?.params.R ?? 0.0307;

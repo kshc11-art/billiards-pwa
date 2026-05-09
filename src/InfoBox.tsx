@@ -718,12 +718,12 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
                 <text x={20 - CUE_DOT_RANGE + 2} y={2}>9</text>
               </g>
 
-              {/* 당점 빨간 점 (큐볼 따라가기) */}
+              {/* 당점 빨간 점 (큐볼 따라가기) — 수구 색에 따라 대비색 사용 */}
               <circle
                 cx={cueDialCx + cue.a * CUE_DOT_RANGE}
                 cy={-cue.b * CUE_DOT_RANGE}
                 r={3.5}
-                fill="#D63030"
+                fill={sys.cueBallId === 'yellow' ? '#5A2E0E' : '#D63030'}
                 pointerEvents="none"
               />
 

@@ -118,18 +118,10 @@ export default function Table() {
       const idx = Math.floor(elapsed * 60);
       if (idx >= maxFrames) {
         setAnimFrame(maxFrames - 1);
-        // 시뮬 끝 → 600ms 후 최종 위치를 sys에 반영 (연속 플레이).
-        // 레이스 컨디션 방지: 600ms 사이에 preview 시뮬이 result를 덮어쓸 수 있으므로
-        // 현재 frames 참조를 캡처하여 변경 여부 확인 후 적용.
-        const capturedFrames = result.frames;
+        // 시뮬 끝 → 600ms 후 최종 위치 반영 + 수구 교대.
+        // applyFinalPositions 내부에서 preview 가드 처리.
         setTimeout(() => {
-          const s = useAppStore.getState();
-          if (s.result?.frames === capturedFrames && !s.result.preview) {
-            s.applyFinalPositions();
-          } else {
-            // result가 바뀌었으면 (preview 등) animFrame만 리셋
-            s.setAnimFrame(-1);
-          }
+          useAppStore.getState().applyFinalPositions();
         }, 600);
         return;
       }
@@ -336,6 +328,20 @@ export default function Table() {
                 style={{ cursor: 'grab', touchAction: 'none' }}
                 onPointerDown={(e) => handleBallPointerDown(e, id)}
               />
+              {/* 수구 표시 링 — 현재 수구에 파란 점선 링 표시 */}
+              {id === sys.cueBallId && (
+                <circle
+                  cx={x}
+                  cy={y}
+                  r={BALL_R_SVG + 3}
+                  fill="none"
+                  stroke="#0088FF"
+                  strokeWidth={1.2}
+                  strokeDasharray="2 2"
+                  strokeOpacity={0.6}
+                  pointerEvents="none"
+                />
+              )}
               {/* 표면 점 3개 — 흰공·노란공 (애니메이션 중: 물리 회전, 정지 시: 기본 위치) */}
               {hasDots &&
                 (dots ?? defaultDots).map((d, i) => (
