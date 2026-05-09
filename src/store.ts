@@ -148,7 +148,7 @@ export interface SimResult {
 const HISTORY_LIMIT = 20;
 
 const DEFAULT_CUE: CueInput = {
-  V0: 3.5,
+  V0: 2.5,
   phi: 90,
   phiAuto: true,
   theta: 0,
@@ -1002,7 +1002,7 @@ export const useAppStore = create<AppState>()(
     {
       name: 'billiards-pwa-v1',
       storage: createJSONStorage(() => localStorage),
-      version: 8, // v8: infobox.exampleMirrorH/V 추가
+      version: 9, // v9: V0 default 3.5→2.5, MAX_V0 8→5
       // localStorage에 저장할 항목만 (sys, result, simRev는 매 세션 새로 생성)
       partialize: (state) => ({
         game: state.game,
@@ -1063,6 +1063,15 @@ export const useAppStore = create<AppState>()(
         }
         if (state.infobox && state.infobox.exampleMirrorV === undefined) {
           state.infobox = { ...state.infobox, exampleMirrorV: false };
+        }
+        // v8 → v9: V0 default 3.5→2.5, MAX 8→5. 기존 V0>5 사용자 보정.
+        if (state.cue && state.cue.V0 !== undefined) {
+          if (state.cue.V0 > 5.0) {
+            state.cue = { ...state.cue, V0: 2.5 };
+          } else if (state.cue.V0 === 3.5) {
+            // 이전 default(3.5) 사용자 → 새 default(2.5)로 보정
+            state.cue = { ...state.cue, V0: 2.5 };
+          }
         }
 
         const drillId = state.menu?.drillId ?? null;

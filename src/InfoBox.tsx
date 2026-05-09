@@ -41,7 +41,7 @@ const AUTO_INACTIVE_DELAY_MS = 2500;
 // V0 게이지: 0 ~ MAX_V0 (m/s) → 0 ~ 80 (px)
 // 3쿠션 표준: 부드러운 샷 1.5~3 m/s, 일반 3~5 m/s, 강한 샷 5~7 m/s.
 // MAX_V0 = 8 (충분한 헤드룸), default V0 = 3.5 (일반 3쿠션).
-const MAX_V0 = 8.0;
+const MAX_V0 = 5.0;
 
 // 다이얼 그룹 좌표 (박스 안 기준).
 // 두 공 가운데 = 당점 chip 가운데 절대 cx=92 (chip group offset 8 + chip 안 가운데 84).
