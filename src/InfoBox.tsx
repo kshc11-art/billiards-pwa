@@ -438,7 +438,7 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
       const clamped = Math.min(1, ratio);
       const sign = dialGroup ? (dialGroup.cueCx >= CUE_BALL_DIAL_CX ? 1 : -1) : 1;
       const cxDiff = clamped * TARGET_CX_DIFF_MAX;
-      const cueDialCxAtStart = CUE_BALL_DIAL_CX - (cxDiff / 2) * sign;
+      const cueDialCxAtStart = CUE_BALL_DIAL_CX + (cxDiff / 2) * sign;
 
       const startClientX = e.clientX;
       const startClientY = e.clientY;
@@ -490,16 +490,15 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
 
         if (mode === 'phi') {
           // 수평 드래그 → 큐대 각도(phi) 조절
-          // 렌더링 좌표에서 드래그 → 모델 역변환 → phi
-          // 렌더: cueDialCx = CUE_BALL_DIAL_CX - (cxDiff/2)*sign
-          // 역변환: model_cxDiff_signed = 2*(CUE_BALL_DIAL_CX - rendered_cx)
+          // 렌더: cueDialCx = CUE_BALL_DIAL_CX + (cxDiff/2)*sign
+          // 역변환: cxDiff_signed = 2*(rendered_cx - CUE_BALL_DIAL_CX)
           const dxSvg = dxClient * svgPerPx;
           const newCueCxRendered = startCueCxRendered + dxSvg;
           const halfRange = TARGET_CX_DIFF_MAX / 2;
           const clampedCx = Math.max(CUE_BALL_DIAL_CX - halfRange,
                                      Math.min(CUE_BALL_DIAL_CX + halfRange, newCueCxRendered));
-          // 렌더 좌표 → 모델 cxDiff (부호 반전: 렌더 왼쪽 = 모델 양수)
-          const newCxDiffSigned = 2 * (CUE_BALL_DIAL_CX - clampedCx);
+          // 렌더 좌표 → 모델 cxDiff (직접 매핑: 렌더 오른쪽 = 모델 양수)
+          const newCxDiffSigned = 2 * (clampedCx - CUE_BALL_DIAL_CX);
           const newSign = newCxDiffSigned >= 0 ? 1 : -1;
           const newRatio = Math.min(1, Math.abs(newCxDiffSigned) / TARGET_CX_DIFF_MAX);
           const newPerp = newRatio * 2 * ballR;
@@ -647,8 +646,9 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
           const clamped = Math.min(1, ratio);
           const sign = dialGroup ? (dialGroup.cueCx >= CUE_BALL_DIAL_CX ? 1 : -1) : 1;
           const cxDiff = clamped * TARGET_CX_DIFF_MAX;
-          const cueDialCx = CUE_BALL_DIAL_CX - (cxDiff / 2) * sign;
-          const targetDialCx = CUE_BALL_DIAL_CX + (cxDiff / 2) * sign;
+          // 모델과 동일 부호 — 부호 반전 제거
+          const cueDialCx = CUE_BALL_DIAL_CX + (cxDiff / 2) * sign;
+          const targetDialCx = CUE_BALL_DIAL_CX - (cxDiff / 2) * sign;
 
           return (
             <>
