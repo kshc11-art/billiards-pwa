@@ -1504,6 +1504,18 @@ export function cueStrike(m, M, R, V0, phi_deg, theta_deg, a, b) {
   wB[1] = (v / I_m) * (Qa * sin(theta));
   wB[2] = (v / I_m) * (-Qa * cos(theta));
 
+  // ── 자연 rolling 바이어스 ──
+  // 실제 당구: 큐 팁의 follow-through로 센터샷에도 약간의 topspin 존재.
+  // 이것이 없으면 센터샷 수구가 ω=0 → 1.6m sliding → dead ball 미작동.
+  // 바이어스: ω를 rolling 조건 방향으로 30% 이동.
+  //   센터: ω=0 → rolling*0.3 (sliding 거리 ~1.6m → ~0.8m)
+  //   밀어/끌어: 기존 ω + 30% rolling 블렌드 (상대 excess 유지)
+  // rolling 조건 (공 프레임): wB[0] = vB[1] / I_m * ... 이 아닌, 
+  //   vB[1] = -v*cos(theta), rolling ωx = -vB[1]/R = v*cos(theta)/R
+  const NATURAL_ROLLING_BIAS = 0.30;
+  const rolling_wx = v * cos(theta) / R;  // 공 프레임 rolling ωx
+  wB[0] = wB[0] + NATURAL_ROLLING_BIAS * (rolling_wx - wB[0]);
+
   // 테이블 프레임으로 회전 (phi + π/2)
   const rotAngle = phi + PI / 2;
   const vT = new Float64Array(3);
