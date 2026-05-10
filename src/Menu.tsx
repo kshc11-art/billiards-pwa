@@ -147,6 +147,8 @@ export default function Menu() {
   const randomizeBalls = useAppStore((s) => s.randomizeBalls);
   const undoPosition = useAppStore((s) => s.undoPosition);
   const prevSnapshot = useAppStore((s) => s.prevSnapshot);
+  const positionEditMode = useAppStore((s) => s.positionEditMode);
+  const setPositionEditMode = useAppStore((s) => s.setPositionEditMode);
   const clearResult = useAppStore((s) => s.clearResult);
 
   // derived
@@ -269,9 +271,16 @@ export default function Menu() {
             <Section title="배치">
               <ChipRow>
                 <Chip
+                  active={positionEditMode}
+                  onClick={() => setPositionEditMode(!positionEditMode)}
+                  tone="tier2"
+                >
+                  {positionEditMode ? '✏️ 편집 중' : '📌 위치 변경'}
+                </Chip>
+                <Chip
                   active={false}
                   onClick={() => randomizeBalls()}
-                  tone="tier2"
+                  tone="neutral"
                 >
                   🎲 랜덤
                 </Chip>
@@ -294,8 +303,9 @@ export default function Menu() {
                 </Chip>
               </ChipRow>
               <p className="mt-1.5 text-[10px] text-[#9FBEDF] leading-snug">
-                테이블 위 공을 직접 드래그하여 원하는 위치로 이동할 수 있습니다.
-                InfoBox 수구를 드래그하면 미세 위치 조절이 가능합니다.
+                {positionEditMode
+                  ? '테이블 위 공을 드래그하여 위치를 변경하세요. 완료 후 다시 눌러 잠금.'
+                  : '위치 변경 버튼을 눌러 공을 이동할 수 있습니다.'}
               </p>
             </Section>
 

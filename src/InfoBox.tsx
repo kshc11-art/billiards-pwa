@@ -52,14 +52,14 @@ const DIAL_Y = 56;
 // 큐볼·적구 시각화 — 동일 크기 r=28 (사용자 명시 좀 더 큼).
 const CUE_BALL_DIAL_CX = 20;
 const CUE_BALL_DIAL_CY = 0;
-const CUE_BALL_DIAL_R = 32;
+const CUE_BALL_DIAL_R = 35;
 const BALL_DIAL_R = CUE_BALL_DIAL_R;
-// 당점 max 위치 — 큐볼 반지름의 0.85 (실제 당구에서 3팁은 큐볼 끝까지 가지 않음).
-// 끝까지 치면 큐대 미스·찍힘 위험. 3팁 = 큐볼 안전 영역 끝 (≈ R×0.85).
-//   1팁 = R × 0.85 / 3 = R × 0.283 (큐볼 안)
-//   2팁 = R × 0.85 × 2/3 = R × 0.567
-//   3팁 = R × 0.85 = 큐볼 안전 max
+// 당점 max 위치 — 물리적으로 3팁 = 공 반지름의 65%.
+// 실제 당구: 큐볼 끝(100%)에 치면 엇나감(miscue). 3팁 = 안전 최대.
+// UI 드래그 전체 범위 = 3팁으로 매핑 → 끝까지 안 가도 3팁 도달.
 const CUE_DOT_RANGE = CUE_BALL_DIAL_R * 0.85;
+// 물리 a/b 최대값 (dot 끝 = MAX_TIP_FRACTION × R)
+const MAX_TIP_FRACTION = 0.65;
 // 적구 옵셋 max — 두께 시각화 (8/8=0, 4/8=R, 0/8=2R).
 // max = 2R = 56 (박스 220 안 STROKE 영역 cx=152와 분리).
 const TARGET_CX_DIFF_MAX = 2 * CUE_BALL_DIAL_R;
@@ -462,12 +462,12 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
         const local = pt.matrixTransform(ctm2.inverse());
         const dx = local.x - pos.x - DIAL_X - cueDialCxAtStart;
         const dy = local.y - pos.y - DIAL_Y - CUE_BALL_DIAL_CY;
-        let a = dx / CUE_DOT_RANGE;
-        let b = -dy / CUE_DOT_RANGE;
+        let a = (dx / CUE_DOT_RANGE) * MAX_TIP_FRACTION;
+        let b = (-dy / CUE_DOT_RANGE) * MAX_TIP_FRACTION;
         const r = Math.hypot(a, b);
-        if (r > 1) {
-          a /= r;
-          b /= r;
+        if (r > MAX_TIP_FRACTION) {
+          a = a / r * MAX_TIP_FRACTION;
+          b = b / r * MAX_TIP_FRACTION;
         }
         setCue({ a, b });
       };
@@ -720,8 +720,8 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
 
               {/* 당점 빨간 점 (큐볼 따라가기) — 수구 색에 따라 대비색 사용 */}
               <circle
-                cx={cueDialCx + cue.a * CUE_DOT_RANGE}
-                cy={-cue.b * CUE_DOT_RANGE}
+                cx={cueDialCx + (cue.a / MAX_TIP_FRACTION) * CUE_DOT_RANGE}
+                cy={(-cue.b / MAX_TIP_FRACTION) * CUE_DOT_RANGE}
                 r={3.5}
                 fill={sys.cueBallId === 'yellow' ? '#5A2E0E' : '#D63030'}
                 pointerEvents="none"
@@ -730,8 +730,8 @@ export default function InfoBox({ isPortrait }: InfoBoxProps) {
               {/* 권장 당점 — 시스템 표준 (activeExample 없을 때) */}
               {recommendedImpact && !activeExample && (
                 <circle
-                  cx={cueDialCx + recommendedImpact.a * CUE_DOT_RANGE}
-                  cy={-recommendedImpact.b * CUE_DOT_RANGE}
+                  cx={cueDialCx + (recommendedImpact.a / MAX_TIP_FRACTION) * CUE_DOT_RANGE}
+                  cy={(-recommendedImpact.b / MAX_TIP_FRACTION) * CUE_DOT_RANGE}
                   r={3.5}
                   fill="none"
                   stroke="#FACA15"

@@ -271,6 +271,9 @@ export interface AppState {
     cueBallId: string;
   } | null;
 
+  /** 공 위치 편집 모드 — true일 때만 테이블에서 공 드래그 가능. */
+  positionEditMode: boolean;
+
   // ── Actions ───────────────────────────────────────
   setGame: (game: Game) => void;
   setFourBallMode: (mode: FourBallMode) => void;
@@ -294,6 +297,8 @@ export interface AppState {
   randomizeBalls: () => void;
   /** 이전 포지션으로 되돌리기. */
   undoPosition: () => void;
+  /** 공 위치 편집 모드 토글. */
+  setPositionEditMode: (on: boolean) => void;
   clearResult: () => void;
   setAnimFrame: (frame: number) => void;
 
@@ -364,6 +369,7 @@ export const useAppStore = create<AppState>()(
       menu: DEFAULT_MENU,
       stats: DEFAULT_STATS,
       prevSnapshot: null,
+      positionEditMode: false,
 
       // ── 게임/시스템 ─────────────────────────────────
       setFourBallMode: (mode) => set({ fourBallMode: mode }),
@@ -837,6 +843,7 @@ export const useAppStore = create<AppState>()(
 
       clearResult: () => set({ result: null, animFrame: -1 }),
       setAnimFrame: (frame) => set({ animFrame: frame }),
+      setPositionEditMode: (on) => set({ positionEditMode: on }),
 
       // ── 연속 플레이: 시뮬 최종 위치 반영 ──────────────
       applyFinalPositions: (capturedFrames, capturedVerdict) => {

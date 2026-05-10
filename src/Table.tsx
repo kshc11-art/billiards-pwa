@@ -71,6 +71,7 @@ export default function Table() {
   const simRev = useAppStore((s) => s.simRev);
   const result = useAppStore((s) => s.result);
   const setBallPos = useAppStore((s) => s.setBallPos);
+  const positionEditMode = useAppStore((s) => s.positionEditMode);
 
   // 시스템 가이드 라인 흰 점선은 v0.7.8에서 제거됨 (실제 시뮬 진로와 혼동되어 노이즈).
   // 시스템 가이드는 SystemGuideLines (응용 예시 적용 시 1개 라인) + DiamondLabels로 충분.
@@ -190,6 +191,7 @@ export default function Table() {
   // 공 드래그
   const handleBallPointerDown = useCallback(
     (e: React.PointerEvent<SVGCircleElement>, ballId: string) => {
+      if (!positionEditMode) return; // 위치 편집 모드가 아니면 드래그 비활성
       const target = e.currentTarget;
       const svg = target.ownerSVGElement;
       if (!svg) return;
@@ -229,7 +231,7 @@ export default function Table() {
       target.addEventListener('pointerup', onUp as EventListener);
       target.addEventListener('pointercancel', onUp as EventListener);
     },
-    [sys, setBallPos]
+    [sys, setBallPos, positionEditMode]
   );
 
   return (
@@ -347,7 +349,7 @@ export default function Table() {
                 stroke={stroke}
                 strokeWidth="0.6"
                 filter="url(#ballShadow)"
-                style={{ cursor: 'grab', touchAction: 'none' }}
+                style={{ cursor: positionEditMode ? 'grab' : 'default', touchAction: 'none' }}
                 onPointerDown={(e) => handleBallPointerDown(e, id)}
               />
               {/* 광택 하이라이트 */}
