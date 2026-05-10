@@ -145,6 +145,8 @@ export default function Menu() {
   const setHandicap = useAppStore((s) => s.setHandicap);
   const resetSystem = useAppStore((s) => s.resetSystem);
   const randomizeBalls = useAppStore((s) => s.randomizeBalls);
+  const undoPosition = useAppStore((s) => s.undoPosition);
+  const prevSnapshot = useAppStore((s) => s.prevSnapshot);
   const clearResult = useAppStore((s) => s.clearResult);
 
   // derived
@@ -282,6 +284,13 @@ export default function Menu() {
                   tone="neutral"
                 >
                   ↺ 초기 위치
+                </Chip>
+                <Chip
+                  active={!!prevSnapshot}
+                  onClick={() => undoPosition()}
+                  tone="neutral"
+                >
+                  ↩ 되돌리기
                 </Chip>
               </ChipRow>
               <p className="mt-1.5 text-[10px] text-[#9FBEDF] leading-snug">

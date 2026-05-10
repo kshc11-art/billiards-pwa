@@ -98,18 +98,24 @@ export default function Table() {
       setAnimFrame(-1);
       return;
     }
+    // 모든 공이 정지한 시점까지 애니메이션.
     const FPS = 60;
-    const MAX_SECONDS = 6;
+    const MAX_SECONDS = 8;
     const stopThreshold = 0.05; // m/s
-    let stopFrame = cueBallFrames.length;
-    for (let i = 1; i < cueBallFrames.length; i++) {
-      const v = cueBallFrames[i].rvw;
-      const speed = Math.sqrt(v[3] * v[3] + v[4] * v[4]);
-      if (speed < stopThreshold) {
-        stopFrame = i;
-        break;
+    // 모든 공의 프레임 중 가장 늦게 정지하는 시점 찾기
+    let lastMovingFrame = 0;
+    for (const [, ballFrames] of Object.entries(result.frames)) {
+      for (let i = ballFrames.length - 1; i >= 0; i--) {
+        const v = ballFrames[i].rvw;
+        const speed = Math.sqrt(v[3] * v[3] + v[4] * v[4]);
+        if (speed >= stopThreshold) {
+          if (i + 1 > lastMovingFrame) lastMovingFrame = i + 1;
+          break;
+        }
       }
     }
+    // 여유 프레임 추가 (공이 멈춘 후 잠시 보여주기)
+    const stopFrame = Math.min(lastMovingFrame + 30, cueBallFrames.length);
     const maxFrames = Math.min(stopFrame, MAX_SECONDS * FPS, cueBallFrames.length);
     const startTime = performance.now();
     let raf = 0;

@@ -59,12 +59,12 @@ export const DEFAULT_BALL_PARAMS = Object.freeze({
   m:   0.170097,                  // 질량 (kg)
   R:   0.028575,                  // 반지름 (m)
   u_s: 0.21,                     // 슬라이딩 마찰계수 (한국 평균)
-  u_r: 0.016,                    // 롤링 마찰계수 (0.012→0.016: 총이동 7.0m→5.9m, 더 빨리 정지)
-  u_sp_proportionality: 10*2/5/9, // 스피닝 마찰 비례상수
+  u_r: 0.10,                     // 실효 롤링 감속 (펠트+공변형+기타. 순수 0.01 × ~10배 경험 보정)
+  u_sp_proportionality: 3.0,    // 스피닝 마찰 비례상수 (0.44→3.0: ωz=157 감쇠 14초→2초)
   u_b: 0.05,                     // 공-공 마찰계수 (legacy 'average' 모드용; Alciatore 사용 시 무관)
   e_b: 0.93,                     // 공-공 반발계수 (한국 페놀릭 공)
-  e_c: 0.80,                     // 공-쿠션 반발계수 (0.85→0.80: 쿠션 후 감속 증가)
-  f_c: 0.06,                     // 공-쿠션 마찰계수 (0.14→0.06: 사이드 편향 18°→5°, ROLLING유지로 커브 해소됨)
+  e_c: 0.80,                     // 공-쿠션 반발계수
+  f_c: 0.06,                     // 공-쿠션 마찰계수
   g:   9.81,                     // 중력가속도 (m/s²)
 });
 
@@ -1351,25 +1351,30 @@ export function resolveBallBall(ball1, ball2, opts = {}) {
     N,
   );
 
-  // ── 수정 A: 충돌 전 ROLLING 이었던 공의 ωx, ωy를 새 v에 맞춤 ──
-  // 이유: Mathavan 모델은 rolling ω를 거의 보존하여, 충돌 후 v가 작아져도
-  //       ωx,ωy는 큰 채로 남아 sliding 마찰로 큐볼을 비정상 가속(+y로 따라감).
-  // 조건: SLIDING 상태(끌어치기·밀어치기)에서는 rolling 조건이 의도적으로 어긋나 있으므로
-  //       spin excess(탑/백 스핀 잔량)를 보존하여 새 v 기준 rolling에 더함.
-  // rolling 조건: ωy = -vx/R, ωx = -vy/R (z축 회전 ωz는 보존)
-  if (ball1WasRolling) {
-    out1[6] = -out1[4] / R1;  // ωx = -vy/R
-    out1[7] =  out1[3] / R1;  // ωy = +vx/R
-    // ωz (out1[8])는 그대로 — 사이드 회전 보존
-  } else if (ball1.state === SLIDING) {
-    // 충돌 전 스핀 excess(밀어/끌어치기)를 새 v 기준 rolling에 더함
+  // ── 수정 A: 충돌 후 ω 보정 ──
+  // 원칙: 충돌 전 ROLLING이었으면 ωx/ωy를 새 v에 맞춰 rolling 유지.
+  // 예외: ωz가 v보다 지배적이면(R|ωz| > 2|v|) → SLIDING 유지.
+  //   이 경우 사이드 스핀이 펠트 마찰을 통해 수구를 옆으로 커브시켜야 함.
+  //   (예: 정타 + 강한 사이드 → 충돌 후 90° 꺾임)
+  const v1Mag = Math.sqrt(out1[3]*out1[3] + out1[4]*out1[4]);
+  const v2Mag = Math.sqrt(out2[3]*out2[3] + out2[4]*out2[4]);
+  const spinDominant1 = R1 * Math.abs(out1[8]) > 2.0 * Math.max(0.01, v1Mag);
+  const spinDominant2 = R2 * Math.abs(out2[8]) > 2.0 * Math.max(0.01, v2Mag);
+
+  if (ball1WasRolling && !spinDominant1) {
+    out1[6] = -out1[4] / R1;
+    out1[7] =  out1[3] / R1;
+  } else if (ball1.state === SLIDING && !spinDominant1) {
     out1[6] = -out1[4] / R1 + excess1Wx;
     out1[7] =  out1[3] / R1 + excess1Wy;
   }
-  if (ball2WasRolling) {
+  // spinDominant: Mathavan 원본 ωx/ωy 유지 → relVelocity ≠ 0 → SLIDING 유지
+  // → sliding 마찰이 ωz와 상호작용 → 수구 방향 전환 (90° 커브)
+
+  if (ball2WasRolling && !spinDominant2) {
     out2[6] = -out2[4] / R2;
     out2[7] =  out2[3] / R2;
-  } else if (ball2.state === SLIDING) {
+  } else if (ball2.state === SLIDING && !spinDominant2) {
     out2[6] = -out2[4] / R2 + excess2Wx;
     out2[7] =  out2[3] / R2 + excess2Wy;
   }

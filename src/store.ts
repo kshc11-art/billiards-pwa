@@ -265,6 +265,12 @@ export interface AppState {
   menu: MenuState;
   stats: Stats;
 
+  /** 이전 포지션 스냅샷 — 되돌리기(undo) 용. */
+  prevSnapshot: {
+    positions: Record<string, [number, number]>;
+    cueBallId: string;
+  } | null;
+
   // ── Actions ───────────────────────────────────────
   setGame: (game: Game) => void;
   setFourBallMode: (mode: FourBallMode) => void;
@@ -286,6 +292,8 @@ export interface AppState {
   applyFinalPositions: (capturedFrames?: Record<string, {rvw: Float64Array}[]>, capturedVerdict?: ScoreVerdict) => void;
   /** 공 위치를 펠트 내 랜덤으로 재배치 (겹침 방지). */
   randomizeBalls: () => void;
+  /** 이전 포지션으로 되돌리기. */
+  undoPosition: () => void;
   clearResult: () => void;
   setAnimFrame: (frame: number) => void;
 
@@ -355,6 +363,7 @@ export const useAppStore = create<AppState>()(
       infobox: DEFAULT_INFOBOX,
       menu: DEFAULT_MENU,
       stats: DEFAULT_STATS,
+      prevSnapshot: null,
 
       // ── 게임/시스템 ─────────────────────────────────
       setFourBallMode: (mode) => set({ fourBallMode: mode }),
@@ -839,6 +848,13 @@ export const useAppStore = create<AppState>()(
         // preview result만 있고 캡처 데이터 없으면 무시
         if (!capturedFrames && result?.preview) return;
         // 각 공의 마지막 프레임 위치를 sys에 반영
+        // 이전 포지션 스냅샷 저장 (되돌리기용)
+        const snapshot: Record<string, [number, number]> = {};
+        for (const [id, ball] of Object.entries(sys.balls)) {
+          snapshot[id] = [ball.rvw[0], ball.rvw[1]];
+        }
+        set({ prevSnapshot: { positions: snapshot, cueBallId: sys.cueBallId } });
+
         for (const [id, fArr] of Object.entries(frames)) {
           const ball = sys.balls[id];
           if (!ball || fArr.length === 0) continue;
@@ -861,6 +877,31 @@ export const useAppStore = create<AppState>()(
           result: null,
           animFrame: -1,
           cue: { ...cue, phi, phiAuto: true },
+        });
+        scheduleAutoSim(get);
+      },
+
+      undoPosition: () => {
+        const { sys, cue, prevSnapshot } = get();
+        if (!prevSnapshot) return;
+        // 스냅샷에서 공 위치 + 수구 복원
+        for (const [id, [ex, ey]] of Object.entries(prevSnapshot.positions)) {
+          const ball = sys.balls[id];
+          if (!ball) continue;
+          ball.rvw[0] = ex;
+          ball.rvw[1] = ey;
+          ball.rvw[3] = ball.rvw[4] = ball.rvw[5] = 0;
+          ball.rvw[6] = ball.rvw[7] = ball.rvw[8] = 0;
+          ball.state = STATIONARY;
+        }
+        sys.cueBallId = prevSnapshot.cueBallId;
+        const phi = recalculatePhi(sys, cue.phi);
+        set({
+          simRev: get().simRev + 1,
+          result: null,
+          animFrame: -1,
+          cue: { ...cue, phi, phiAuto: true },
+          prevSnapshot: null,
         });
         scheduleAutoSim(get);
       },
