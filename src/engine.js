@@ -1062,22 +1062,39 @@ export function resolveBallLinearCushion(rvw, cushion, params, cushion_height, p
   const vn_out = -vn * params.e_c;
   const vt_out = vt * params.e_c;
 
-  // ── 2. English — 반사 속도를 ωz 방향으로 회전 ──
-  // ωz < 0 (CW, 오른쪽 회전) → 반사 벡터를 CW 회전 = 사용자 오른쪽으로 편향
-  // ωz > 0 (CCW, 왼쪽 회전) → 반사 벡터를 CCW 회전 = 사용자 왼쪽으로 편향
-  // 회전 각도: θ = factor * R * ωz / |v| (작은 각도 근사)
+  // ── 2. English — 화면(SVG) 좌표에서 회전 후 엔진으로 역변환 ──
+  // engineToSvg: vSVG_x = -vy*s, vSVG_y = vx*s (90° CCW + scale)
+  // SVG는 y축 아래 → 화면 CW = 수학 CW와 반대 → 별도 처리 필요
+  // 
+  // ωz < 0 (3시, 오른쪽) → 화면에서 CW 회전 = 사용자 오른쪽
+  // ωz > 0 (9시, 왼쪽) → 화면에서 CCW 회전 = 사용자 왼쪽
   const vReflect = Math.sqrt(vn_out*vn_out + vt_out*vt_out);
   const ENG = params.f_c * 0.8;
-  const engAngle = vReflect > 0.01 ? -ENG * params.R * rvw[8] / vReflect : 0;
-  // 반사 속도를 월드 좌표로 합성 후 회전
   const vrx = vn_out * nx + vt_out * tx;
   const vry = vn_out * ny + vt_out * ty;
-  const cosA = Math.cos(engAngle), sinA = Math.sin(engAngle);
-
-  // ── 3. 속도 재합성 (회전 적용) ──
+  
   const out = rvw.slice();
-  out[3] = vrx * cosA - vry * sinA;
-  out[4] = vrx * sinA + vry * cosA;
+  if (vReflect > 0.01 && Math.abs(rvw[8]) > 0.1) {
+    // 1. 엔진 → SVG 속도 변환
+    const vsx = -vry;  // SVG x (scale 생략, 비율만 중요)
+    const vsy = vrx;   // SVG y
+    
+    // 2. 화면 CW 회전 (y-down 좌표에서 CW):
+    //    | cos(θ)   sin(θ) |   θ > 0 → CW on screen
+    //    |-sin(θ)   cos(θ) |
+    // ωz < 0 → θ > 0 (CW) = 오른쪽
+    const screenAngle = ENG * params.R * rvw[8] / vReflect;
+    const cs = Math.cos(screenAngle), sn = Math.sin(screenAngle);
+    const vsx2 =  cs * vsx + sn * vsy;
+    const vsy2 = -sn * vsx + cs * vsy;
+    
+    // 3. SVG → 엔진 역변환: vex = vsy, vey = -vsx
+    out[3] = vsy2;
+    out[4] = -vsx2;
+  } else {
+    out[3] = vrx;
+    out[4] = vry;
+  }
 
   // ── 4. ωz 감쇠 ──
   out[8] = rvw[8] * 0.85;
