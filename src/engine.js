@@ -1043,24 +1043,44 @@ export function han2005(rvw, xy_normal, R, m, h, e_c, f_c) {
  * @returns {[Float64Array, number]} [새 rvw, SLIDING]
  */
 export function resolveBallLinearCushion(rvw, cushion, params, cushion_height, prevState) {
-  // 법선 방향: 공의 속도와 같은 방향이어야 함 (공이 쿠션에 다가가는 중)
+  // 법선 방향: 공 → 쿠션 방향 (vdot > 0)
   let nx = cushion.normal_xy[0], ny = cushion.normal_xy[1];
   const vdot = rvw[3]*nx + rvw[4]*ny;
   if (vdot < 0) { nx = -nx; ny = -ny; }
 
-  const normal = new Float64Array([nx, ny, 0]);
-  const out = han2005(rvw, normal, params.R, params.m, cushion_height, params.e_c, params.f_c);
+  // 접선 방향 (법선의 90° 회전)
+  const tx = -ny, ty = nx;
 
-  // 쿠션 반사 후 SLIDING 재진입 방지:
-  //   실제 당구에서 쿠션 반사 후 펠트가 즉시 공을 그립 → 거의 즉시 ROLLING 복귀.
-  //   원본 Pooltool은 항상 SLIDING 반환 → 반사 후 장시간 SLIDING (커브+급감속).
-  //   수정: 충돌 전 ROLLING이었으면 ωx/ωy를 새 v에 맞춰 ROLLING 유지.
-  //         ωz(사이드 스핀)는 보존 → english 효과 유지.
+  // 속도 분해
+  const vn = rvw[3]*nx + rvw[4]*ny; // 법선 성분
+  const vt = rvw[3]*tx + rvw[4]*ty; // 접선 성분
+  const speed = Math.sqrt(vn*vn + vt*vt);
+
+  // ── 1. 대칭 반사 — 입사각 = 반사각 (법선·접선 동일 비율 감쇠) ──
+  const vn_out = -vn * params.e_c;
+  const vt_out = vt * params.e_c; // 접선도 동일 비율 감쇠 → 각도 보존
+
+  // ── 2. English 효과 — ωz가 접선 속도에 기여 ──
+  // 접촉점 회전속도의 접선 성분 = R·ωz → 쿠션 마찰이 이를 상쇄
+  // → 공에 반대 방향 접선 충격 전달
+  const ENGLISH_FACTOR = params.f_c * 0.6;
+  const englishDelta = -ENGLISH_FACTOR * params.R * rvw[8];
+  const vt_final = vt_out + englishDelta;
+
+  // ── 3. 속도 재합성 ──
+  const out = rvw.slice();
+  out[3] = vn_out * nx + vt_final * tx;
+  out[4] = vn_out * ny + vt_final * ty;
+
+  // ── 4. ωz 감쇠 ──
+  const SPIN_TRANSFER = 0.15;
+  out[8] = rvw[8] * (1 - SPIN_TRANSFER);
+
+  // ── 5. ωx/ωy → rolling ──
   if (prevState === ROLLING || prevState === undefined) {
     const R = params.R;
-    out[6] = -out[4] / R;  // ωx = -vy/R (rolling 조건)
-    out[7] =  out[3] / R;  // ωy = vx/R
-    // ωz (out[8])는 han2005 결과 유지 (english 효과)
+    out[6] = -out[4] / R;
+    out[7] =  out[3] / R;
     return [out, ROLLING];
   }
 
@@ -1351,32 +1371,55 @@ export function resolveBallBall(ball1, ball2, opts = {}) {
     N,
   );
 
-  // ── 수정 A: 충돌 후 ω 보정 ──
-  // 원칙: 충돌 전 ROLLING이었으면 ωx/ωy를 새 v에 맞춰 rolling 유지.
-  // 예외: ωz가 v보다 지배적이면(R|ωz| > 2|v|) → SLIDING 유지.
-  //   이 경우 사이드 스핀이 펠트 마찰을 통해 수구를 옆으로 커브시켜야 함.
-  //   (예: 정타 + 강한 사이드 → 충돌 후 90° 꺾임)
-  const v1Mag = Math.sqrt(out1[3]*out1[3] + out1[4]*out1[4]);
-  const v2Mag = Math.sqrt(out2[3]*out2[3] + out2[4]*out2[4]);
-  const spinDominant1 = R1 * Math.abs(out1[8]) > 2.0 * Math.max(0.01, v1Mag);
-  const spinDominant2 = R2 * Math.abs(out2[8]) > 2.0 * Math.max(0.01, v2Mag);
+  // ── 수정 A: 충돌 후 ω 보정 + 에너지 캡 ──
+  // 실제 excess 크기로 판단 (ball.state 플래그 대신)
+  // excess가 클 때: topspin/backspin 보존
+  // excess가 0: rolling 강제 (dead ball)
+  const I_m = 2/5;
+  
+  // 충돌 전 총 KE
+  const kePre = 0.5 * p1.m * (ball1.rvw[3]**2+ball1.rvw[4]**2)
+              + 0.5 * I_m * p1.m * R1*R1 * (ball1.rvw[6]**2+ball1.rvw[7]**2+ball1.rvw[8]**2)
+              + 0.5 * p2.m * (ball2.rvw[3]**2+ball2.rvw[4]**2)
+              + 0.5 * I_m * p2.m * R2*R2 * (ball2.rvw[6]**2+ball2.rvw[7]**2+ball2.rvw[8]**2);
 
-  if (ball1WasRolling && !spinDominant1) {
-    out1[6] = -out1[4] / R1;
-    out1[7] =  out1[3] / R1;
-  } else if (ball1.state === SLIDING && !spinDominant1) {
+  // excess 크기로 판단 (|excess| > 5 rad/s이면 보존)
+  const EXCESS_THRESHOLD = 5.0;
+  const hasExcess1 = Math.abs(excess1Wx) > EXCESS_THRESHOLD || Math.abs(excess1Wy) > EXCESS_THRESHOLD;
+  const hasExcess2 = Math.abs(excess2Wx) > EXCESS_THRESHOLD || Math.abs(excess2Wy) > EXCESS_THRESHOLD;
+
+  if (hasExcess1) {
     out1[6] = -out1[4] / R1 + excess1Wx;
     out1[7] =  out1[3] / R1 + excess1Wy;
+  } else {
+    out1[6] = -out1[4] / R1;
+    out1[7] =  out1[3] / R1;
   }
-  // spinDominant: Mathavan 원본 ωx/ωy 유지 → relVelocity ≠ 0 → SLIDING 유지
-  // → sliding 마찰이 ωz와 상호작용 → 수구 방향 전환 (90° 커브)
 
-  if (ball2WasRolling && !spinDominant2) {
-    out2[6] = -out2[4] / R2;
-    out2[7] =  out2[3] / R2;
-  } else if (ball2.state === SLIDING && !spinDominant2) {
+  if (hasExcess2) {
     out2[6] = -out2[4] / R2 + excess2Wx;
     out2[7] =  out2[3] / R2 + excess2Wy;
+  } else {
+    out2[6] = -out2[4] / R2;
+    out2[7] =  out2[3] / R2;
+  }
+
+  // 에너지 캡: 충돌 후 총 KE > 충돌 전 → ω 비례 축소
+  const kePost = 0.5 * p1.m * (out1[3]**2+out1[4]**2)
+               + 0.5 * I_m * p1.m * R1*R1 * (out1[6]**2+out1[7]**2+out1[8]**2)
+               + 0.5 * p2.m * (out2[3]**2+out2[4]**2)
+               + 0.5 * I_m * p2.m * R2*R2 * (out2[6]**2+out2[7]**2+out2[8]**2);
+
+  if (kePost > kePre * 1.001) {
+    const keTransPost = 0.5 * p1.m * (out1[3]**2+out1[4]**2)
+                      + 0.5 * p2.m * (out2[3]**2+out2[4]**2);
+    const keRotPost = kePost - keTransPost;
+    const keRotAllowed = Math.max(0, kePre - keTransPost);
+    if (keRotPost > 0) {
+      const scale = Math.sqrt(keRotAllowed / keRotPost);
+      out1[6] *= scale; out1[7] *= scale; out1[8] *= scale;
+      out2[6] *= scale; out2[7] *= scale; out2[8] *= scale;
+    }
   }
 
   return [out1, out2, SLIDING, SLIDING];
@@ -2198,6 +2241,11 @@ export function simulate(system, opts = {}) {
       );
       ball.rvw = newRvw;
       ball.state = newState;
+
+      // 위치 클램프: 쿠션 반사 후 공이 테이블 밖으로 나가지 않도록
+      const bR = ball.params.R;
+      ball.rvw[0] = Math.max(bR, Math.min(system.table.w - bR, ball.rvw[0]));
+      ball.rvw[1] = Math.max(bR, Math.min(system.table.l - bR, ball.rvw[1]));
 
       system.events.push({
         type: EventType.BALL_CUSHION,
