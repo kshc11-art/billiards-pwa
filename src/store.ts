@@ -1050,7 +1050,7 @@ export const useAppStore = create<AppState>()(
     {
       name: 'billiards-pwa-v1',
       storage: createJSONStorage(() => localStorage),
-      version: 9, // v9: V0 default 3.5→2.5, MAX_V0 8→5
+      version: 10, // v10: MAX_TIP_FRACTION=0.65, positionEditMode 추가
       // localStorage에 저장할 항목만 (sys, result, simRev는 매 세션 새로 생성)
       partialize: (state) => ({
         game: state.game,
@@ -1120,6 +1120,18 @@ export const useAppStore = create<AppState>()(
             // 이전 default(3.5) 사용자 → 새 default(2.5)로 보정
             state.cue = { ...state.cue, V0: 2.5 };
           }
+        }
+
+        // v9 → v10: MAX_TIP_FRACTION=0.65. 기존 a/b > 0.65 → 0.65로 클램프.
+        if (state.cue) {
+          const MAX_TIP = 0.65;
+          let { a = 0, b = 0 } = state.cue;
+          const r = Math.hypot(a, b);
+          if (r > MAX_TIP) {
+            a = a / r * MAX_TIP;
+            b = b / r * MAX_TIP;
+          }
+          state.cue = { ...state.cue, a, b };
         }
 
         const drillId = state.menu?.drillId ?? null;

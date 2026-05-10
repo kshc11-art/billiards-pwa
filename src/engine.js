@@ -1043,47 +1043,48 @@ export function han2005(rvw, xy_normal, R, m, h, e_c, f_c) {
  * @returns {[Float64Array, number]} [새 rvw, SLIDING]
  */
 export function resolveBallLinearCushion(rvw, cushion, params, cushion_height, prevState) {
+  // 원본 법선 (flip 전) — english 방향 결정에 사용
+  const origNx = cushion.normal_xy[0], origNy = cushion.normal_xy[1];
+
   // 법선 방향: 공 → 쿠션 방향 (vdot > 0)
-  let nx = cushion.normal_xy[0], ny = cushion.normal_xy[1];
+  let nx = origNx, ny = origNy;
   const vdot = rvw[3]*nx + rvw[4]*ny;
   if (vdot < 0) { nx = -nx; ny = -ny; }
 
-  // 접선 방향 (법선의 90° 회전)
+  // 접선 방향
   const tx = -ny, ty = nx;
 
   // 속도 분해
-  const vn = rvw[3]*nx + rvw[4]*ny; // 법선 성분
-  const vt = rvw[3]*tx + rvw[4]*ty; // 접선 성분
-  const speed = Math.sqrt(vn*vn + vt*vt);
+  const vn = rvw[3]*nx + rvw[4]*ny;
+  const vt = rvw[3]*tx + rvw[4]*ty;
 
-  // ── 1. 대칭 반사 — 입사각 = 반사각 (법선·접선 동일 비율 감쇠) ──
+  // ── 1. 대칭 반사 (법선·접선 동일 비율 감쇠 → 각도 보존) ──
   const vn_out = -vn * params.e_c;
-  const vt_out = vt * params.e_c; // 접선도 동일 비율 감쇠 → 각도 보존
+  const vt_out = vt * params.e_c;
 
-  // ── 2. English 효과 — ωz가 접선 속도에 기여 ──
-  // 접촉점 회전속도의 접선 성분 = R·ωz → 쿠션 마찰이 이를 상쇄
-  // → 공에 반대 방향 접선 충격 전달
-  const ENGLISH_FACTOR = params.f_c * 0.6;
-  const englishDelta = -ENGLISH_FACTOR * params.R * rvw[8];
-  const vt_final = vt_out + englishDelta;
+  // ── 2. English — 월드 좌표 직접 계산 (원본 법선 사용) ──
+  // 접촉점 = R * origN (공 중심 → 쿠션 표면 방향, flip 전)
+  // 접촉점 회전속도 = ω × r = (0,0,ωz) × (R·origNx, R·origNy, 0)
+  //   = (-ωz·R·origNy, ωz·R·origNx, 0)
+  // 쿠션 마찰 → 반대 방향: Δv = factor·(ωz·R·origNy, -ωz·R·origNx, 0)
+  const ENG = params.f_c * 0.6;
+  const engVx = -ENG * rvw[8] * params.R * origNy;
+  const engVy =  ENG * rvw[8] * params.R * origNx;
 
   // ── 3. 속도 재합성 ──
   const out = rvw.slice();
-  out[3] = vn_out * nx + vt_final * tx;
-  out[4] = vn_out * ny + vt_final * ty;
+  out[3] = vn_out * nx + vt_out * tx + engVx;
+  out[4] = vn_out * ny + vt_out * ty + engVy;
 
   // ── 4. ωz 감쇠 ──
-  const SPIN_TRANSFER = 0.15;
-  out[8] = rvw[8] * (1 - SPIN_TRANSFER);
+  out[8] = rvw[8] * 0.85;
 
   // ── 5. ωx/ωy → rolling ──
   if (prevState === ROLLING || prevState === undefined) {
-    const R = params.R;
-    out[6] = -out[4] / R;
-    out[7] =  out[3] / R;
+    out[6] = -out[4] / params.R;
+    out[7] =  out[3] / params.R;
     return [out, ROLLING];
   }
-
   return [out, SLIDING];
 }
 
@@ -1765,9 +1766,9 @@ export class Table {
     // 출처: pooltool/objects/table/layout.py → create_billiard_table_cushion_segments
     const h = cushion_height;
     this.cushions = [
-      new LinearCushionSegment("3",  [0, 0], [0, l], h),   // 좌측 장변 (x=0)
-      new LinearCushionSegment("12", [w, l], [w, 0], h),   // 우측 장변 (x=W)
-      new LinearCushionSegment("9",  [0, l], [w, l], h),   // 꼬리 단변 (y=L)
+      new LinearCushionSegment("3",  [0, l], [0, 0], h),   // 좌측 장변 (x=0)
+      new LinearCushionSegment("12", [w, 0], [w, l], h),   // 우측 장변 (x=W)
+      new LinearCushionSegment("9",  [w, l], [0, l], h),   // 꼬리 단변 (y=L)
       new LinearCushionSegment("18", [0, 0], [w, 0], h),   // 머리 단변 (y=0)  ← 원본은 순서 [0,0]→[w,0]
     ];
 
