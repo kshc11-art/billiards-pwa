@@ -1062,19 +1062,22 @@ export function resolveBallLinearCushion(rvw, cushion, params, cushion_height, p
   const vn_out = -vn * params.e_c;
   const vt_out = vt * params.e_c;
 
-  // ── 2. English — 월드 좌표 직접 계산 (원본 법선 사용) ──
-  // 접촉점 = R * origN (공 중심 → 쿠션 표면 방향, flip 전)
-  // 접촉점 회전속도 = ω × r = (0,0,ωz) × (R·origNx, R·origNy, 0)
-  //   = (-ωz·R·origNy, ωz·R·origNx, 0)
-  // 쿠션 마찰 → 반대 방향: Δv = factor·(ωz·R·origNy, -ωz·R·origNx, 0)
-  const ENG = params.f_c * 0.6;
-  const engVx = -ENG * rvw[8] * params.R * origNy;
-  const engVy =  ENG * rvw[8] * params.R * origNx;
+  // ── 2. English — 반사 속도를 ωz 방향으로 회전 ──
+  // ωz < 0 (CW, 오른쪽 회전) → 반사 벡터를 CW 회전 = 사용자 오른쪽으로 편향
+  // ωz > 0 (CCW, 왼쪽 회전) → 반사 벡터를 CCW 회전 = 사용자 왼쪽으로 편향
+  // 회전 각도: θ = factor * R * ωz / |v| (작은 각도 근사)
+  const vReflect = Math.sqrt(vn_out*vn_out + vt_out*vt_out);
+  const ENG = params.f_c * 0.8;
+  const engAngle = vReflect > 0.01 ? -ENG * params.R * rvw[8] / vReflect : 0;
+  // 반사 속도를 월드 좌표로 합성 후 회전
+  const vrx = vn_out * nx + vt_out * tx;
+  const vry = vn_out * ny + vt_out * ty;
+  const cosA = Math.cos(engAngle), sinA = Math.sin(engAngle);
 
-  // ── 3. 속도 재합성 ──
+  // ── 3. 속도 재합성 (회전 적용) ──
   const out = rvw.slice();
-  out[3] = vn_out * nx + vt_out * tx + engVx;
-  out[4] = vn_out * ny + vt_out * ty + engVy;
+  out[3] = vrx * cosA - vry * sinA;
+  out[4] = vrx * sinA + vry * cosA;
 
   // ── 4. ωz 감쇠 ──
   out[8] = rvw[8] * 0.85;
@@ -1615,26 +1618,21 @@ export function resolveStickBall(rvw, params, ball_m, ball_R) {
   const cue_end_mass = params.cue_end_mass ?? (0.170097 / 30); // Pooltool 기본
   const e_c = params.e_c ?? 0.85;
 
-  // ── UI 입력 규약 ↔ Pooltool 내부 규약 매핑 ──
-  // Pooltool 원본 정의 (Evan Kiefl docstring 명시):
-  //   a = -1 → 공의 오른쪽(3시), a = +1 → 공의 왼쪽(9시)
-  // 일반 사용자 직관 (한국·외국 공통 클럭 표기):
-  //   3시 클릭 → 우회전(ωz<0), 9시 클릭 → 좌회전(ωz>0), 부호: 3시 = 양수
-  // 우리 UI는 사용자 직관 규약(3시 = 양수 a)으로 입력 받으므로,
-  // Pooltool 내부 함수 호출 시 -a로 뒤집어 부호 매핑을 일치시킴.
-  //
-  // 참고: Pooltool 본체도 PR #181(v0.4.3)에서 GUI ↔ 물리엔진 좌표계 불일치를
-  //       수정한 적 있음 ("Fix cue contact point offset coordinate system mismatch
-  //       between GUI and physics" by derek-mcblane).
-  // 적용 대상: 모든 사용자 (한국·외국 무관)
-  const aFlipped = -a;
+  // ── UI 입력 → Pooltool 내부 규약 ──
+  // Pooltool 원본: a = -1 → 공의 오른쪽(3시), a = +1 → 공의 왼쪽(9시)
+  // UI: a = +1 → 3시(오른쪽), a = -1 → 9시(왼쪽)
+  // 
+  // 실제 당구: 3시(오른쪽) 타격 → 위에서 보면 시계방향(CW) = ωz < 0
+  // Pooltool: a=+1(왼쪽) → ωz < 0 (CW)
+  // 따라서 UI a=+1(3시) → Pooltool에 a=+1 전달 → ωz<0 → CW → 올바른 오른쪽 회전
+  // 
+  // aFlipped(-a)는 불필요: UI 부호와 Pooltool 부호가 이미 올바르게 매핑됨.
+  // UI +a(오른쪽 탭) → Pooltool +a(왼쪽 레이블이지만 CW 회전 생성) → 실제 오른쪽 회전
+  let aContact = a, bContact = b;
 
   // ── PR #182 Cue Tip Geometry 보정 (옵션) ──
-  // tip_radius > 0 일 때, 사용자 입력 a/b가 큐 팁 *중심* 오프셋이라고 가정하여
-  // ball 표면 *접촉점*으로 변환. 기본값 0이면 보정 없음 (직접 접촉점 입력).
-  let aContact = aFlipped, bContact = b;
   if (tip_radius > 0) {
-    [aContact, bContact] = tipContactOffset(aFlipped, b, tip_radius, ball_R);
+    [aContact, bContact] = tipContactOffset(a, b, tip_radius, ball_R);
   }
 
   // ── 큐 타격 본체 ──
