@@ -1062,39 +1062,29 @@ export function resolveBallLinearCushion(rvw, cushion, params, cushion_height, p
   const vn_out = -vn * params.e_c;
   const vt_out = vt * params.e_c;
 
-  // ── 2. English — 화면(SVG) 좌표에서 회전 후 엔진으로 역변환 ──
-  // engineToSvg: vSVG_x = -vy*s, vSVG_y = vx*s (90° CCW + scale)
-  // SVG는 y축 아래 → 화면 CW = 수학 CW와 반대 → 별도 처리 필요
-  // 
-  // ωz < 0 (3시, 오른쪽) → 화면에서 CW 회전 = 사용자 오른쪽
-  // ωz > 0 (9시, 왼쪽) → 화면에서 CCW 회전 = 사용자 왼쪽
-  const vReflect = Math.sqrt(vn_out*vn_out + vt_out*vt_out);
+  // ── 2. English — 물리 직접 계산 (쿠션별 접촉점 벡터곱) ──
+  // 접촉점 = R * (쿠션 방향) = R * (-nx_inward, -ny_inward) [공→쿠션]
+  // 접촉점 속도 = ω × r_contact = (ωz·R·ny, -ωz·R·nx, 0) [inward normal 사용]
+  // 마찰 = -접촉점 속도 방향: Δv = factor·(-ωz·R·ny, ωz·R·nx, 0)
+  //
+  // 검증: 상단쿠션 nx=0,ny=-1 → Δvx=factor·ωz·R (ωz>0→+x=화면↓=큐뒤R ✓)
+  //       우측쿠션 nx=-1,ny=0 → Δvy=-factor·ωz·R (ωz>0→-y=화면R ✓)
+  //
+  // nx,ny = flip된 법선 (공→쿠션 방향), origNx/Ny = flip 전.
+  // 여기서는 flip된 nx,ny를 사용: 항상 공→쿠션 방향이므로
+  // 접촉 방향 = (nx, ny), r_contact = R·(nx, ny)
+  // ω × r = (0,0,ωz) × (R·nx, R·ny, 0) = (-ωz·R·ny, ωz·R·nx, 0)
+  // 마찰 Δv = factor · (ωz·R·ny, -ωz·R·nx, 0)
   const ENG = params.f_c * 0.8;
+  const engVx =  ENG * rvw[8] * params.R * ny;
+  const engVy = -ENG * rvw[8] * params.R * nx;
+
+  // ── 3. 속도 재합성 ──
   const vrx = vn_out * nx + vt_out * tx;
   const vry = vn_out * ny + vt_out * ty;
-  
   const out = rvw.slice();
-  if (vReflect > 0.01 && Math.abs(rvw[8]) > 0.1) {
-    // 1. 엔진 → SVG 속도 변환
-    const vsx = -vry;  // SVG x (scale 생략, 비율만 중요)
-    const vsy = vrx;   // SVG y
-    
-    // 2. 화면 CW 회전 (y-down 좌표에서 CW):
-    //    | cos(θ)   sin(θ) |   θ > 0 → CW on screen
-    //    |-sin(θ)   cos(θ) |
-    // ωz < 0 → θ > 0 (CW) = 오른쪽
-    const screenAngle = ENG * params.R * rvw[8] / vReflect;
-    const cs = Math.cos(screenAngle), sn = Math.sin(screenAngle);
-    const vsx2 =  cs * vsx + sn * vsy;
-    const vsy2 = -sn * vsx + cs * vsy;
-    
-    // 3. SVG → 엔진 역변환: vex = vsy, vey = -vsx
-    out[3] = vsy2;
-    out[4] = -vsx2;
-  } else {
-    out[3] = vrx;
-    out[4] = vry;
-  }
+  out[3] = vrx + engVx;
+  out[4] = vry + engVy;
 
   // ── 4. ωz 감쇠 ──
   out[8] = rvw[8] * 0.85;
@@ -1635,21 +1625,15 @@ export function resolveStickBall(rvw, params, ball_m, ball_R) {
   const cue_end_mass = params.cue_end_mass ?? (0.170097 / 30); // Pooltool 기본
   const e_c = params.e_c ?? 0.85;
 
-  // ── UI 입력 → Pooltool 내부 규약 ──
-  // Pooltool 원본: a = -1 → 공의 오른쪽(3시), a = +1 → 공의 왼쪽(9시)
-  // UI: a = +1 → 3시(오른쪽), a = -1 → 9시(왼쪽)
-  // 
-  // 실제 당구: 3시(오른쪽) 타격 → 위에서 보면 시계방향(CW) = ωz < 0
-  // Pooltool: a=+1(왼쪽) → ωz < 0 (CW)
-  // 따라서 UI a=+1(3시) → Pooltool에 a=+1 전달 → ωz<0 → CW → 올바른 오른쪽 회전
-  // 
-  // aFlipped(-a)는 불필요: UI 부호와 Pooltool 부호가 이미 올바르게 매핑됨.
-  // UI +a(오른쪽 탭) → Pooltool +a(왼쪽 레이블이지만 CW 회전 생성) → 실제 오른쪽 회전
-  let aContact = a, bContact = b;
+  // ── UI → Pooltool 좌표 보정 ──
+  // InfoBox: 3시 탭 → a=+0.5. Pooltool: a=+1 → 9시(좌), a=-1 → 3시(우).
+  // 부호 반전으로 매핑: InfoBox 3시(+a) → Pooltool 3시(-a).
+  const aFlipped = -a;
+  let aContact = aFlipped, bContact = b;
 
   // ── PR #182 Cue Tip Geometry 보정 (옵션) ──
   if (tip_radius > 0) {
-    [aContact, bContact] = tipContactOffset(a, b, tip_radius, ball_R);
+    [aContact, bContact] = tipContactOffset(aFlipped, b, tip_radius, ball_R);
   }
 
   // ── 큐 타격 본체 ──
